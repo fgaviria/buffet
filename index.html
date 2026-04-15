@@ -58,7 +58,7 @@
     // ═══════════════════════════════════════════════════════════════
     //  ⚙️  CONFIGURACIÓN — editá estas líneas antes de deployar
     // ═══════════════════════════════════════════════════════════════
-    const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbx7msBJOYYIQvOjfimoaP5zKUkyLI5j5giOxlD5ZDArjfE6dhy8Zk0TJLSNNQIKS4U/exec";
+    const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxVWRPXFVW_MgmkACudOmhva4xmRPozsMsEzl8Hn8T87ggbPsRtOlX_6UhLxEa6-g0u/exec";
     const KIOSK_PIN = "1928";   // PIN para acceder al panel de entregas
     const ALIAS_PAGO = "BuffetFamily2026";
     const DISCOUNT = 0.15;     // 15% de descuento
@@ -213,7 +213,6 @@
       const items = () => Object.entries(cart).filter(([, q]) => q > 0).map(([id, qty]) => ({ ...MENU.find(m => m.id === +id), qty }));
       const rawT = items().reduce((s, i) => s + i.price * i.qty, 0);
       const discT = Math.round(rawT * (1 - DISCOUNT));
-      const nextN = () => orders.reduce((m, o) => Math.max(m, o.number || 0), 0) + 1;
 
       // Init backend
       async function initBackend() {
@@ -255,23 +254,24 @@
         if (!items().length) { toast_("Agregá al menos un ítem", "err"); return; }
         if (!file) { toast_("Adjuntá el comprobante", "err"); return; }
         setLoading(true);
-        const number = nextN();
         try {
           const b64 = await fileToBase64(file);
           const res = await apiPost({
-            action: "submitOrder", number,
+            action: "submitOrder",
             name: name.trim(), phone: phone.trim(),
             items: items(), total: discT,
             fileData: b64, fileName: file.name, fileType: file.type,
           });
           if (!res.ok) throw new Error(res.error || "Error");
+          const number = res.orderNumber;
           const order = { number, name: name.trim(), phone: phone.trim(), items: items(), total: discT, fileName: file.name, fileUrl: res.fileUrl || "", delivered: false, at: new Date().toISOString() };
           setOrders(p => [...p, order]);
           setSubmitted(order);
           setCart({}); setName(""); setPhone(""); setFile(null); setFileName("");
           setView("done");
         } catch {
-          const order = { number, name: name.trim(), phone: phone.trim(), items: items(), total: discT, fileName: file.name, fileUrl: "", delivered: false, at: new Date().toISOString(), pendingSync: true };
+          const tmpNumber = "tmp-" + Date.now();
+          const order = { number: tmpNumber, name: name.trim(), phone: phone.trim(), items: items(), total: discT, fileName: file.name, fileUrl: "", delivered: false, at: new Date().toISOString(), pendingSync: true };
           setOrders(p => [...p, order]);
           setSubmitted(order);
           setCart({}); setName(""); setPhone(""); setFile(null); setFileName("");

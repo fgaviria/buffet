@@ -58,12 +58,16 @@
     // ═══════════════════════════════════════════════════════════════
     //  ⚙️  CONFIGURACIÓN — editá estas líneas antes de deployar
     // ═══════════════════════════════════════════════════════════════
-    const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzPFm7UXEdgOpeZiigrfw864YpgZxIwfwLD5jVotnJNEnLVfj6rV5Q0-oeeVsoaOhaS/exec";
+    const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycby4lGlYKtFHgmsnb2G4IozOO4YSiBDHdo2Xy7b4Q4ENrJhVJ8cWqJP9sANASUm6Qh3q/exec";
     const KIOSK_PIN = "1928";   // PIN para acceder al panel de entregas
-    const ALIAS_PAGO = "BuffetFamily2026";
-    const DISCOUNT = 0.15;     // 15% de descuento
-    const EVENT_NAME = "Buffet Family";
-    const EVENT_SUBTITLE = "Evento del colegio";
+    // Estos valores son defaults — se sobreescriben con los de la pestaña Config de Sheets
+    const DEFAULTS = {
+      discount: 0.15,
+      mensajeDescuento: "🎉 15% de descuento en todos los productos — ¡pagá anticipado!",
+      eventoNombre: "Buffet Family",
+      eventoSubtitulo: "Evento del colegio",
+      aliasPago: "BuffetFamily2026",
+    };
 
     // ── Menú (se carga desde Google Sheets al iniciar) ────────────
     // Estos valores son el fallback offline — se reemplazan con los de la Sheet
@@ -184,6 +188,7 @@
       const [orders, setOrders] = useState(() => loadLocal(LOCAL_KEY, []));
       const [menu, setMenu] = useState(() => loadLocal("kiosko_menu_v3", MENU_DEFAULT));
       const [menuLoading, setMenuLoading] = useState(false);
+      const [config, setConfig] = useState(() => loadLocal("kiosko_config_v3", DEFAULTS));
       const [cart, setCart] = useState({});
       const [name, setName] = useState("");
       const [phone, setPhone] = useState("");
@@ -210,21 +215,36 @@
         setTimeout(() => setToast(null), 3500);
       }
 
-      // Carga el menú desde la Sheet al montar
+      // Carga menú y config desde la Sheet al montar
       useEffect(() => {
-        if (APPS_SCRIPT_URL.includes("TU_DEPLOYMENT_ID")) return; // no configurado aún
-        async function loadMenu() {
+        if (APPS_SCRIPT_URL.includes("TU_DEPLOYMENT_ID")) return;
+        async function loadRemote() {
           setMenuLoading(true);
           try {
-            const res = await apiGet({ action: "getMenu" });
-            if (res.ok && res.menu && res.menu.length > 0) {
-              setMenu(res.menu);
-              saveLocal("kiosko_menu_v3", res.menu);
+            const [menuRes, cfgRes] = await Promise.all([
+              apiGet({ action: "getMenu" }),
+              apiGet({ action: "getConfig" }),
+            ]);
+            if (menuRes.ok && menuRes.menu && menuRes.menu.length > 0) {
+              setMenu(menuRes.menu);
+              saveLocal("kiosko_menu_v3", menuRes.menu);
             }
-          } catch (e) { /* usa el menú del caché local */ }
+            if (cfgRes.ok && cfgRes.config) {
+              const c = cfgRes.config;
+              const merged = {
+                discount: c.descuento !== undefined ? Number(c.descuento) : DEFAULTS.discount,
+                mensajeDescuento: c.mensaje_descuento !== undefined ? c.mensaje_descuento : DEFAULTS.mensajeDescuento,
+                eventoNombre: c.evento_nombre || DEFAULTS.eventoNombre,
+                eventoSubtitulo: c.evento_subtitulo || DEFAULTS.eventoSubtitulo,
+                aliasPago: c.alias_pago || DEFAULTS.aliasPago,
+              };
+              setConfig(merged);
+              saveLocal("kiosko_config_v3", merged);
+            }
+          } catch (e) { /* usa defaults del caché */ }
           setMenuLoading(false);
         }
-        loadMenu();
+        loadRemote();
       }, []);
 
       // Carrito
@@ -232,7 +252,7 @@
       const remove = (id) => setCart(c => { const n = { ...c }; n[id] > 1 ? n[id]-- : delete n[id]; return n; });
       const items = () => Object.entries(cart).filter(([, q]) => q > 0).map(([id, qty]) => ({ ...menu.find(m => m.id === +id), qty }));
       const rawT = items().reduce((s, i) => s + i.price * i.qty, 0);
-      const discT = Math.round(rawT * (1 - DISCOUNT));
+      const discT = Math.round(rawT * (1 - config.discount));
 
       // Init backend
       async function initBackend() {
@@ -368,8 +388,8 @@
         // Header
         React.createElement("div", { style: S.hdr },
           React.createElement("div", null,
-            React.createElement("div", { style: { fontSize: 17, fontWeight: 700, color: C.text } }, EVENT_NAME),
-            React.createElement("div", { style: { fontSize: 12, color: C.textMuted, marginTop: 1 } }, EVENT_SUBTITLE)
+            React.createElement("div", { style: { fontSize: 17, fontWeight: 700, color: C.text } }, config.eventoNombre),
+            React.createElement("div", { style: { fontSize: 12, color: C.textMuted, marginTop: 1 } }, config.eventoSubtitulo)
           ),
           React.createElement("div", { style: { display: "flex", gap: 6 } },
             React.createElement("button", { style: S.navBtn(view === "home" || view === "done"), onClick: () => setView("home") }, "Pedir"),
@@ -380,8 +400,8 @@
 
         // ── VISTA HOME ──
         view === "home" && React.createElement("div", null,
-          React.createElement("div", { style: { ...S.succCard, fontWeight: 600, fontSize: 13, marginBottom: 16 } },
-            "🎉 " + Math.round(DISCOUNT * 100) + "% de descuento en todos los productos — ¡pagá anticipado!"
+          config.mensajeDescuento && React.createElement("div", { style: { ...S.succCard, fontWeight: 600, fontSize: 13, marginBottom: 16 } },
+            config.mensajeDescuento
           ),
           React.createElement("div", { style: S.sec },
             React.createElement("div", { style: S.secTitle },
@@ -390,7 +410,7 @@
             ),
             menu.map(item => {
               const qty = cart[item.id] || 0;
-              const disc = Math.round(item.price * (1 - DISCOUNT));
+              const disc = Math.round(item.price * (1 - config.discount));
               return React.createElement("div", { key: item.id, style: S.card },
                 React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 } },
                   React.createElement("div", { style: { flex: 1 } },
@@ -398,7 +418,7 @@
                     React.createElement("div", { style: { fontSize: 12, color: C.textMuted, marginTop: 2 } }, item.desc),
                     React.createElement("div", { style: { marginTop: 5, display: "flex", gap: 7, alignItems: "baseline" } },
                       React.createElement("span", { style: { fontSize: 14, fontWeight: 700, color: C.blue } }, fmt(disc)),
-                      React.createElement("span", { style: { fontSize: 11, color: C.textLight, textDecoration: "line-through" } }, fmt(item.price))
+                      config.discount > 0 && React.createElement("span", { style: { fontSize: 11, color: C.textLight, textDecoration: "line-through" } }, fmt(item.price))
                     )
                   ),
                   React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8 } },
@@ -415,7 +435,7 @@
             React.createElement("div", { style: { fontSize: 13, fontWeight: 700, color: C.blue, marginBottom: 8 } }, "Tu pedido"),
             items().map(i => React.createElement("div", { key: i.id, style: { display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 3, color: C.text } },
               React.createElement("span", null, i.qty + "x " + i.name),
-              React.createElement("span", null, fmt(Math.round(i.price * i.qty * (1 - DISCOUNT))))
+              React.createElement("span", null, fmt(Math.round(i.price * i.qty * (1 - config.discount))))
             )),
             React.createElement("div", { style: S.divider }),
             React.createElement("div", { style: { display: "flex", justifyContent: "space-between", fontWeight: 700, fontSize: 14, color: C.blue } },
@@ -429,16 +449,16 @@
             React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 } },
               React.createElement("div", null,
                 React.createElement("div", { style: { fontSize: 11, color: C.amber, marginBottom: 2 } }, "Alias CBU / CVU"),
-                React.createElement("div", { style: { fontSize: 20, fontWeight: 700, color: C.text, letterSpacing: "0.02em" } }, ALIAS_PAGO)
+                React.createElement("div", { style: { fontSize: 20, fontWeight: 700, color: C.text, letterSpacing: "0.02em" } }, config.aliasPago)
               ),
               React.createElement("button", {
                 style: { padding: "10px 16px", fontSize: 13, fontWeight: 700, cursor: "pointer", borderRadius: 8, background: C.amber, color: "white", border: "none", whiteSpace: "nowrap" },
                 onClick: () => {
-                  navigator.clipboard.writeText(ALIAS_PAGO)
+                  navigator.clipboard.writeText(config.aliasPago)
                     .then(() => toast_("✓ Alias copiado"))
                     .catch(() => {
                       const el = document.createElement("textarea");
-                      el.value = ALIAS_PAGO; document.body.appendChild(el); el.select();
+                      el.value = config.aliasPago; document.body.appendChild(el); el.select();
                       document.execCommand("copy"); document.body.removeChild(el);
                       toast_("✓ Alias copiado");
                     });
@@ -482,7 +502,7 @@
             React.createElement("div", { style: { fontSize: 12, color: C.textMuted, marginBottom: 8 } }, "Detalle del pedido"),
             submitted.items.map(i => React.createElement("div", { key: i.id, style: { display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 3, color: C.text } },
               React.createElement("span", null, i.qty + "x " + i.name),
-              React.createElement("span", null, fmt(Math.round(i.price * i.qty * (1 - DISCOUNT))))
+              React.createElement("span", null, fmt(Math.round(i.price * i.qty * (1 - config.discount))))
             )),
             React.createElement("div", { style: S.divider }),
             React.createElement("div", { style: { display: "flex", justifyContent: "space-between", fontSize: 14, fontWeight: 700, color: C.text } },

@@ -202,13 +202,50 @@
       const [toast, setToast] = useState(null);
       const [pin, setPin] = useState("");
       const [unlocked, setUnlocked] = useState(false);
+      const [kioskTab, setKioskTab] = useState("buscar"); // "buscar" | "config"
       const [loading, setLoading] = useState(false);
-      const [meta, setMeta] = useState(() => loadLocal(LOCAL_META, {}));
+      const [verifying, setVerifying] = useState(false);
+      const [verifyResult, setVerifyResult] = useState(null); // {ok, foundAmount, match}
+      const [meta, setMeta] = useState(() => {
+        // Lee la clave actual y también versiones anteriores por compatibilidad
+        const keys = [LOCAL_META, "kiosko_meta_v2", "kiosko_meta_v1"];
+        for (const k of keys) {
+          const val = loadLocal(k, null);
+          if (val && val.backendOk) return val;
+        }
+        return {};
+      });
 
       const backendOk = meta.backendOk || false;
+      const [backendVerified, setBackendVerified] = useState(null); // null=no chequeado, true/false
 
       useEffect(() => { saveLocal(LOCAL_KEY, orders); }, [orders]);
       useEffect(() => { saveLocal(LOCAL_META, meta); }, [meta]);
+
+      // Verifica el backend en tiempo real cuando se abre la tab de config
+      useEffect(() => {
+        if (kioskTab === "config" && !APPS_SCRIPT_URL.includes("TU_DEPLOYMENT_ID")) {
+          setBackendVerified(null);
+          apiGet({ action: "ping" })
+            .then(res => {
+              if (res.ok) {
+                setBackendVerified(true);
+                // Si el meta no tenía backendOk, lo actualiza
+                if (!meta.backendOk) setMeta(m => ({ ...m, backendOk: true }));
+              } else {
+                setBackendVerified(false);
+              }
+            })
+            .catch(() => setBackendVerified(false));
+        }
+      }, [kioskTab]);
+
+      // Auto-sync cuando el operador desbloquea el panel
+      useEffect(() => {
+        if (unlocked && !APPS_SCRIPT_URL.includes("TU_DEPLOYMENT_ID")) {
+          syncOrders();
+        }
+      }, [unlocked]);
 
       function toast_(msg, type = "ok") {
         setToast({ msg, type });
@@ -272,20 +309,91 @@
         setLoading(true);
         try {
           const data = await apiGet({ action: "getOrders" });
-          if (data.ok && data.orders && data.orders.length > 0) {
-            const merged = data.orders.map(r => {
-              const loc = orders.find(o => String(o.number) === String(r.number));
-              return loc ? { ...loc, delivered: r.delivered } : {
-                number: r.number, name: r.name, phone: r.phone, itemsStr: r.itemsStr,
-                items: r.itemsStr.split(", ").map(s => { const [q, ...rest] = s.split("x "); return { name: rest.join("x ").trim(), qty: +q }; }),
-                total: r.total, fileUrl: r.fileUrl, delivered: r.delivered, at: r.at
+          if (data.ok && data.orders) {
+            if (data.orders.length === 0) {
+              toast_("La planilla no tiene pedidos todavía");
+              setLoading(false);
+              return;
+            }
+            // Sheets es la fuente de verdad — reconstruye todos los pedidos desde ahí
+            // Solo conserva fileUrl local si Sheets no lo tiene (pedido pendiente de sync)
+            const fromSheets = data.orders.map(r => {
+              const local = orders.find(o => String(o.number) === String(r.number));
+              const itemsParsed = r.itemsStr
+                ? r.itemsStr.split(", ").map(s => {
+                  const idx = s.indexOf("x ");
+                  return { qty: +s.slice(0, idx), name: s.slice(idx + 2).trim() };
+                })
+                : (local ? local.items : []);
+              return {
+                number: r.number,
+                name: r.name,
+                phone: r.phone,
+                itemsStr: r.itemsStr,
+                items: itemsParsed,
+                total: Number(r.total),
+                fileUrl: r.fileUrl || (local ? local.fileUrl : ""),
+                delivered: r.delivered,
+                at: r.at,
               };
             });
-            setOrders(merged);
-            toast_(`${merged.length} pedidos sincronizados`);
-          } else toast_("Sin pedidos en Sheets todavía");
-        } catch { toast_("Error al sincronizar", "err"); }
+            // Agrega pedidos locales pendientes de sync que aún no están en Sheets
+            const pendingLocal = orders.filter(o =>
+              o.pendingSync && !fromSheets.find(r => String(r.number) === String(o.number))
+            );
+            setOrders([...fromSheets, ...pendingLocal]);
+            toast_(`${fromSheets.length} pedidos cargados desde Sheets`);
+          } else {
+            toast_("Error al leer la planilla", "err");
+          }
+        } catch (e) {
+          toast_("Error al sincronizar: " + e.message, "err");
+        }
         setLoading(false);
+      }
+
+      // Verificación del comprobante con Claude Vision
+      async function verifyPayment(b64, fileType, expectedTotal) {
+        try {
+          const mediaType = fileType === "application/pdf" ? "application/pdf" : fileType || "image/jpeg";
+          const response = await fetch("https://api.anthropic.com/v1/messages", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              model: "claude-sonnet-4-20250514",
+              max_tokens: 256,
+              messages: [{
+                role: "user",
+                content: [
+                  {
+                    type: mediaType === "application/pdf" ? "document" : "image",
+                    source: { type: "base64", media_type: mediaType, data: b64 }
+                  },
+                  {
+                    type: "text",
+                    text: `Sos un verificador de comprobantes de pago argentinos. Analizá esta imagen y respondé SOLO con un JSON sin markdown, con este formato exacto:
+{"monto": 1234.56, "moneda": "ARS", "tipo": "transferencia|mercadopago|otro", "encontrado": true}
+Si no podés identificar un monto claro respondé: {"monto": null, "encontrado": false}
+No agregues ningún texto fuera del JSON.`
+                  }
+                ]
+              }]
+            })
+          });
+          const data = await response.json();
+          const text = data.content?.[0]?.text?.trim() || "";
+          const clean = text.replace(/```json|```/g, "").trim();
+          const parsed = JSON.parse(clean);
+          if (!parsed.encontrado || parsed.monto === null) {
+            return { ok: false, foundAmount: null, match: null };
+          }
+          // Tolerancia ±5% para cubrir redondeos o descuentos parciales
+          const tolerance = expectedTotal * 0.05;
+          const match = Math.abs(parsed.monto - expectedTotal) <= tolerance;
+          return { ok: true, foundAmount: parsed.monto, match };
+        } catch (e) {
+          return { ok: false, foundAmount: null, match: null, error: e.message };
+        }
       }
 
       // Submit
@@ -293,9 +401,24 @@
         if (!name.trim()) { toast_("Ingresá tu nombre", "err"); return; }
         if (!items().length) { toast_("Agregá al menos un ítem", "err"); return; }
         if (!file) { toast_("Adjuntá el comprobante", "err"); return; }
+
+        // ── Verificación del comprobante ──────────────────────────
+        setVerifying(true);
+        setVerifyResult(null);
+        const b64pre = await fileToBase64(file);
+        const vResult = await verifyPayment(b64pre, file.type, discT);
+        setVerifyResult(vResult);
+        setVerifying(false);
+        if (vResult.ok && !vResult.match) {
+          // Monto detectado pero no coincide — bloquea y pide nuevo comprobante
+          setLoading(false);
+          return;
+        }
+        // ─────────────────────────────────────────────────────────
+
         setLoading(true);
         try {
-          const b64 = await fileToBase64(file);
+          const b64 = b64pre; // reutiliza el base64 ya calculado
           const res = await apiPost({
             action: "submitOrder",
             name: name.trim(), phone: phone.trim(),
@@ -393,8 +516,7 @@
           ),
           React.createElement("div", { style: { display: "flex", gap: 6 } },
             React.createElement("button", { style: S.navBtn(view === "home" || view === "done"), onClick: () => setView("home") }, "Pedir"),
-            React.createElement("button", { style: S.navBtn(view === "kiosk"), onClick: () => { setView("kiosk"); setSearch(""); setResult(null); setSearched(false); } }, "Entregar"),
-            React.createElement("button", { style: S.navBtn(view === "config"), onClick: () => setView("config") }, "⚙")
+            React.createElement("button", { style: S.navBtn(view === "kiosk"), onClick: () => { setView("kiosk"); setSearch(""); setResult(null); setSearched(false); setKioskTab("buscar"); } }, "Entregar")
           )
         ),
 
@@ -478,18 +600,59 @@
 
           React.createElement("div", { style: S.sec },
             React.createElement("div", { style: S.secTitle }, "Comprobante de pago"),
-            React.createElement("div", { style: { ...S.card, textAlign: "center", cursor: "pointer" }, onClick: () => document.getElementById("fi").click() },
+            React.createElement("div", {
+              style: {
+                ...S.card, textAlign: "center", cursor: "pointer",
+                border: verifyResult ? `1px solid ${verifyResult.ok && verifyResult.match ? C.greenBorder : verifyResult.ok && !verifyResult.match ? C.red + "99" : C.border}` : `1px solid ${C.border}`
+              },
+              onClick: () => { document.getElementById("fi").click(); }
+            },
               fileName
-                ? React.createElement("div", null, React.createElement("div", { style: { fontSize: 22, marginBottom: 3 } }, "📎"), React.createElement("div", { style: { fontSize: 13, color: C.blue, fontWeight: 600 } }, fileName))
-                : React.createElement("div", null, React.createElement("div", { style: { fontSize: 22, marginBottom: 3 } }, "📤"), React.createElement("div", { style: { fontSize: 13, color: C.textMuted } }, "Adjuntar comprobante de MercadoPago"), React.createElement("div", { style: { fontSize: 11, color: C.textLight, marginTop: 2 } }, "JPG, PNG o PDF"))
+                ? React.createElement("div", null,
+                  React.createElement("div", { style: { fontSize: 22, marginBottom: 3 } }, "📎"),
+                  React.createElement("div", { style: { fontSize: 13, color: C.blue, fontWeight: 600 } }, fileName),
+                  verifying && React.createElement("div", { style: { fontSize: 12, color: C.textMuted, marginTop: 6 } }, "🔍 Verificando comprobante…"),
+                  verifyResult && verifyResult.ok && verifyResult.match && React.createElement("div", { style: { fontSize: 12, color: C.green, marginTop: 6, fontWeight: 600 } },
+                    "✅ Monto verificado: " + fmt(verifyResult.foundAmount)
+                  ),
+                  verifyResult && verifyResult.ok && !verifyResult.match && React.createElement("div", null,
+                    React.createElement("div", { style: { fontSize: 13, color: C.red, marginTop: 8, fontWeight: 600 } },
+                      "❌ El monto no coincide"
+                    ),
+                    React.createElement("div", { style: { fontSize: 12, color: C.red, marginTop: 3 } },
+                      "Comprobante: " + fmt(verifyResult.foundAmount) + " · Tu pedido: " + fmt(discT)
+                    ),
+                    React.createElement("div", { style: { fontSize: 12, color: C.textMuted, marginTop: 6 } },
+                      "Por favor subí el comprobante correspondiente a este pedido."
+                    )
+                  ),
+                  verifyResult && !verifyResult.ok && React.createElement("div", { style: { fontSize: 12, color: C.textMuted, marginTop: 6 } },
+                    "No se pudo leer el monto — verificación manual en el buffet"
+                  )
+                )
+                : React.createElement("div", null,
+                  React.createElement("div", { style: { fontSize: 22, marginBottom: 3 } }, "📤"),
+                  React.createElement("div", { style: { fontSize: 13, color: C.textMuted } }, "Adjuntar comprobante de MercadoPago"),
+                  React.createElement("div", { style: { fontSize: 11, color: C.textLight, marginTop: 2 } }, "JPG, PNG o PDF")
+                )
             ),
-            React.createElement("input", { id: "fi", type: "file", accept: "image/*,.pdf", style: { display: "none" }, onChange: e => { const f = e.target.files[0]; if (f) { setFile(f); setFileName(f.name); } } })
+            React.createElement("input", {
+              id: "fi", type: "file", accept: "image/*,.pdf", style: { display: "none" },
+              onChange: e => {
+                const f = e.target.files[0];
+                if (f) { setFile(f); setFileName(f.name); setVerifyResult(null); }
+              }
+            })
           ),
 
           React.createElement("button", {
-            style: { ...S.primBtn, width: "100%", padding: "13px 0", fontSize: 15, opacity: loading ? 0.6 : 1 },
-            onClick: submit, disabled: loading
-          }, loading ? "Enviando pedido…" : "Confirmar pedido →")
+            style: {
+              ...S.primBtn, width: "100%", padding: "13px 0", fontSize: 15,
+              opacity: (loading || verifying || (verifyResult && verifyResult.ok && !verifyResult.match)) ? 0.6 : 1,
+              background: (verifyResult && verifyResult.ok && !verifyResult.match) ? C.red : C.blue
+            },
+            onClick: submit, disabled: (loading || verifying || (verifyResult && verifyResult.ok && !verifyResult.match))
+          }, (verifyResult && verifyResult.ok && !verifyResult.match) ? "Cambiá el comprobante para continuar" : verifying ? "🔍 Verificando comprobante…" : loading ? "Enviando pedido…" : "Confirmar pedido →")
         ),
 
         // ── CONFIRMACIÓN ──
@@ -540,74 +703,85 @@
             React.createElement("div", null,
               React.createElement("div", { style: { fontSize: 15, fontWeight: 700, color: C.text } }, "Panel de entregas"),
               React.createElement("div", { style: { fontSize: 12, color: C.textMuted } },
-                orders.length + " pedidos · " + orders.filter(o => o.delivered).length + " entregados"
+                loading ? "Cargando pedidos…" : orders.length + " pedidos · " + orders.filter(o => o.delivered).length + " entregados"
               )
             ),
             React.createElement("div", { style: { display: "flex", gap: 6 } },
-              React.createElement("button", { style: { ...S.ghostBtn, fontSize: 12 }, onClick: syncOrders, disabled: loading }, loading ? "…" : "↻ Sync"),
-              React.createElement("button", { style: { ...S.ghostBtn, fontSize: 12 }, onClick: () => { setUnlocked(false); setPin(""); } }, "Salir")
+              kioskTab === "buscar" && React.createElement("button", { style: { ...S.ghostBtn, fontSize: 12 }, onClick: syncOrders, disabled: loading }, loading ? "…" : "↻ Sync"),
+              React.createElement("button", { style: S.navBtn(kioskTab === "buscar"), onClick: () => setKioskTab("buscar") }, "Entregas"),
+              React.createElement("button", { style: S.navBtn(kioskTab === "config"), onClick: () => setKioskTab("config") }, "⚙"),
+              React.createElement("button", { style: { ...S.ghostBtn, fontSize: 12 }, onClick: () => { setUnlocked(false); setPin(""); setKioskTab("buscar"); } }, "Salir")
             )
           ),
 
-          !backendOk && React.createElement("div", { style: { ...S.warnCard, fontSize: 12, marginBottom: 12 } },
-            "⚠ Backend no configurado — los pedidos se guardan solo localmente. Configurá en ⚙"
-          ),
-
-          React.createElement("div", { style: { display: "flex", gap: 8, marginBottom: 14 } },
-            React.createElement("input", { style: { ...S.input, flex: 1 }, placeholder: "Buscar por número o nombre…", value: search, onChange: e => setSearch(e.target.value), onKeyDown: e => e.key === "Enter" && doSearch() }),
-            React.createElement("button", { style: S.primBtn, onClick: doSearch }, "Buscar")
-          ),
-
-          searched && !result && React.createElement("div", { style: { ...S.card, textAlign: "center", color: C.textMuted, fontSize: 13 } }, "No se encontraron pedidos"),
-
-          result && result.multi && React.createElement("div", null,
-            React.createElement("div", { style: { fontSize: 12, color: C.textMuted, marginBottom: 6 } }, result.multi.length + " resultados:"),
-            result.multi.map(o => React.createElement("div", { key: o.number, style: S.card }, React.createElement(OCard, { o, big: false })))
-          ),
-
-          result && !result.multi && React.createElement("div", { style: { ...S.card, border: `2px solid ${result.delivered ? C.greenBorder : C.blueBorder}`, marginBottom: 12 } },
-            React.createElement(OCard, { o: result, big: true })
-          ),
-
-          React.createElement("div", { style: S.divider }),
-          React.createElement("div", { style: { ...S.secTitle, marginBottom: 8 } }, "Todos los pedidos"),
-          orders.length === 0 && React.createElement("div", { style: { fontSize: 13, color: C.textLight } }, "Aún no hay pedidos"),
-          [...orders].reverse().map(o => React.createElement("div", { key: o.number, style: { ...S.card, opacity: o.delivered ? 0.6 : 1 } },
-            React.createElement(OCard, { o, big: false })
-          ))
-        ),
-
-        // ── CONFIG ──
-        view === "config" && React.createElement("div", null,
-          React.createElement("div", { style: { fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 16 } }, "Configuración del backend"),
-
-          React.createElement("div", { style: S.card },
-            React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 6 } }, "Estado"),
-            React.createElement("div", { style: { fontSize: 13, color: backendOk ? C.green : C.amber } },
-              backendOk ? "✓ Conectado a Google Apps Script" : "⚠ Sin configurar"
+          kioskTab === "buscar" && React.createElement("div", null,
+            (!backendOk && backendVerified === false) && React.createElement("div", { style: { ...S.warnCard, fontSize: 12, marginBottom: 12 } },
+              "⚠ Backend sin conexión — los pedidos se guardan solo localmente. Configurá en ⚙"
             ),
-            backendOk && meta.sheetUrl && React.createElement("div", { style: { marginTop: 8, display: "flex", flexDirection: "column", gap: 5 } },
-              React.createElement("a", { href: meta.sheetUrl, target: "_blank", rel: "noreferrer", style: { fontSize: 12 } }, "📊 Abrir Google Sheet"),
-              React.createElement("a", { href: meta.driveUrl, target: "_blank", rel: "noreferrer", style: { fontSize: 12 } }, "📁 Abrir carpeta en Drive")
-            )
+
+            React.createElement("div", { style: { display: "flex", gap: 8, marginBottom: 14 } },
+              React.createElement("input", { style: { ...S.input, flex: 1 }, placeholder: "Buscar por número o nombre…", value: search, onChange: e => setSearch(e.target.value), onKeyDown: e => e.key === "Enter" && doSearch() }),
+              React.createElement("button", { style: S.primBtn, onClick: doSearch }, "Buscar")
+            ),
+
+            searched && !result && React.createElement("div", { style: { ...S.card, textAlign: "center", color: C.textMuted, fontSize: 13 } }, "No se encontraron pedidos"),
+
+            result && result.multi && React.createElement("div", null,
+              React.createElement("div", { style: { fontSize: 12, color: C.textMuted, marginBottom: 6 } }, result.multi.length + " resultados:"),
+              result.multi.map(o => React.createElement("div", { key: o.number, style: S.card }, React.createElement(OCard, { o, big: false })))
+            ),
+
+            result && !result.multi && React.createElement("div", { style: { ...S.card, border: `2px solid ${result.delivered ? C.greenBorder : C.blueBorder}`, marginBottom: 12 } },
+              React.createElement(OCard, { o: result, big: true })
+            ),
+
+            React.createElement("div", { style: S.divider }),
+            React.createElement("div", { style: { ...S.secTitle, marginBottom: 8 } }, "Todos los pedidos"),
+            orders.length === 0 && React.createElement("div", { style: { fontSize: 13, color: C.textLight } }, "Aún no hay pedidos"),
+            [...orders].reverse().map(o => React.createElement("div", { key: o.number, style: { ...S.card, opacity: o.delivered ? 0.6 : 1 } },
+              React.createElement(OCard, { o, big: false })
+            ))
           ),
 
-          React.createElement("div", { style: { ...S.card, background: C.grayLight } },
-            React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 8 } }, "Pasos para configurar"),
-            React.createElement("ol", { style: { fontSize: 12, color: C.textMuted, paddingLeft: 16, lineHeight: 1.9 } },
-              React.createElement("li", null, "Abrí ", React.createElement("a", { href: "https://script.google.com", target: "_blank" }, "script.google.com"), " con la cuenta Gmail del evento"),
-              React.createElement("li", null, "Nuevo proyecto → pegá el código de Code.gs"),
-              React.createElement("li", null, "Implementar → Nueva implementación → Aplicación web"),
-              React.createElement("li", null, "Ejecutar como: Yo · Acceso: Cualquier persona"),
-              React.createElement("li", null, "Copiá la URL /exec y reemplazá APPS_SCRIPT_URL en este archivo HTML"),
-              React.createElement("li", null, "Tocá el botón de abajo para crear la Sheet y Drive")
-            )
-          ),
+          kioskTab === "config" && React.createElement("div", null,
+            React.createElement("div", { style: { fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 16 } }, "Configuración del backend"),
 
-          React.createElement("button", {
-            style: { ...S.primBtn, width: "100%", padding: "12px 0", opacity: loading ? 0.6 : 1 },
-            onClick: initBackend, disabled: loading
-          }, loading ? "Inicializando…" : "Inicializar backend en Google")
+            React.createElement("div", { style: S.card },
+              React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 6 } }, "Estado"),
+              React.createElement("div", {
+                style: {
+                  fontSize: 13, color:
+                    backendVerified === null ? C.textMuted :
+                      backendVerified === true ? C.green : C.amber
+                }
+              },
+                backendVerified === null ? "⏳ Verificando conexión…" :
+                  backendVerified === true ? "✓ Conectado a Google Apps Script" :
+                    "⚠ Sin conexión con el backend"
+              ),
+              (backendOk || backendVerified) && meta.sheetUrl && React.createElement("div", { style: { marginTop: 8, display: "flex", flexDirection: "column", gap: 5 } },
+                React.createElement("a", { href: meta.sheetUrl, target: "_blank", rel: "noreferrer", style: { fontSize: 12 } }, "📊 Abrir Google Sheet"),
+                React.createElement("a", { href: meta.driveUrl, target: "_blank", rel: "noreferrer", style: { fontSize: 12 } }, "📁 Abrir carpeta en Drive")
+              )
+            ),
+
+            React.createElement("div", { style: { ...S.card, background: C.grayLight } },
+              React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 8 } }, "Pasos para configurar"),
+              React.createElement("ol", { style: { fontSize: 12, color: C.textMuted, paddingLeft: 16, lineHeight: 1.9 } },
+                React.createElement("li", null, "Abrí ", React.createElement("a", { href: "https://script.google.com", target: "_blank" }, "script.google.com"), " con la cuenta Gmail del evento"),
+                React.createElement("li", null, "Nuevo proyecto → pegá el código de Code.gs"),
+                React.createElement("li", null, "Implementar → Nueva implementación → Aplicación web"),
+                React.createElement("li", null, "Ejecutar como: Yo · Acceso: Cualquier persona"),
+                React.createElement("li", null, "Copiá la URL /exec y reemplazá APPS_SCRIPT_URL en este archivo HTML"),
+                React.createElement("li", null, "Tocá el botón de abajo para crear la Sheet y Drive")
+              )
+            ),
+
+            React.createElement("button", {
+              style: { ...S.primBtn, width: "100%", padding: "12px 0", opacity: loading ? 0.6 : 1 },
+              onClick: initBackend, disabled: loading
+            }, loading ? "Inicializando…" : "Inicializar backend en Google")
+          )
         )
       );
     }

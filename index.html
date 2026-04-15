@@ -58,15 +58,16 @@
     // ═══════════════════════════════════════════════════════════════
     //  ⚙️  CONFIGURACIÓN — editá estas líneas antes de deployar
     // ═══════════════════════════════════════════════════════════════
-    const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxVWRPXFVW_MgmkACudOmhva4xmRPozsMsEzl8Hn8T87ggbPsRtOlX_6UhLxEa6-g0u/exec";
+    const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzPFm7UXEdgOpeZiigrfw864YpgZxIwfwLD5jVotnJNEnLVfj6rV5Q0-oeeVsoaOhaS/exec";
     const KIOSK_PIN = "1928";   // PIN para acceder al panel de entregas
     const ALIAS_PAGO = "BuffetFamily2026";
     const DISCOUNT = 0.15;     // 15% de descuento
     const EVENT_NAME = "Buffet Family";
     const EVENT_SUBTITLE = "Evento del colegio";
 
-    // ── Menú ──────────────────────────────────────────────────────
-    const MENU = [
+    // ── Menú (se carga desde Google Sheets al iniciar) ────────────
+    // Estos valores son el fallback offline — se reemplazan con los de la Sheet
+    const MENU_DEFAULT = [
       { id: 1, name: "Sándwich de milanesa", price: 1200, desc: "Con lechuga y tomate", emoji: "🥪" },
       { id: 2, name: "Sándwich de jamón y queso", price: 900, desc: "En pan de molde tostado", emoji: "🫓" },
       { id: 3, name: "Empanada x3", price: 700, desc: "Carne, pollo o caprese", emoji: "🫔" },
@@ -181,6 +182,8 @@
     function App() {
       const [view, setView] = useState("home");
       const [orders, setOrders] = useState(() => loadLocal(LOCAL_KEY, []));
+      const [menu, setMenu] = useState(() => loadLocal("kiosko_menu_v3", MENU_DEFAULT));
+      const [menuLoading, setMenuLoading] = useState(false);
       const [cart, setCart] = useState({});
       const [name, setName] = useState("");
       const [phone, setPhone] = useState("");
@@ -207,10 +210,27 @@
         setTimeout(() => setToast(null), 3500);
       }
 
+      // Carga el menú desde la Sheet al montar
+      useEffect(() => {
+        if (APPS_SCRIPT_URL.includes("TU_DEPLOYMENT_ID")) return; // no configurado aún
+        async function loadMenu() {
+          setMenuLoading(true);
+          try {
+            const res = await apiGet({ action: "getMenu" });
+            if (res.ok && res.menu && res.menu.length > 0) {
+              setMenu(res.menu);
+              saveLocal("kiosko_menu_v3", res.menu);
+            }
+          } catch (e) { /* usa el menú del caché local */ }
+          setMenuLoading(false);
+        }
+        loadMenu();
+      }, []);
+
       // Carrito
       const add = (id) => setCart(c => ({ ...c, [id]: (c[id] || 0) + 1 }));
       const remove = (id) => setCart(c => { const n = { ...c }; n[id] > 1 ? n[id]-- : delete n[id]; return n; });
-      const items = () => Object.entries(cart).filter(([, q]) => q > 0).map(([id, qty]) => ({ ...MENU.find(m => m.id === +id), qty }));
+      const items = () => Object.entries(cart).filter(([, q]) => q > 0).map(([id, qty]) => ({ ...menu.find(m => m.id === +id), qty }));
       const rawT = items().reduce((s, i) => s + i.price * i.qty, 0);
       const discT = Math.round(rawT * (1 - DISCOUNT));
 
@@ -364,8 +384,11 @@
             "🎉 " + Math.round(DISCOUNT * 100) + "% de descuento en todos los productos — ¡pagá anticipado!"
           ),
           React.createElement("div", { style: S.sec },
-            React.createElement("div", { style: S.secTitle }, "Menú"),
-            MENU.map(item => {
+            React.createElement("div", { style: S.secTitle },
+              "Menú",
+              menuLoading && React.createElement("span", { style: { fontSize: 11, color: C.textLight, marginLeft: 8, fontWeight: 400 } }, "actualizando…")
+            ),
+            menu.map(item => {
               const qty = cart[item.id] || 0;
               const disc = Math.round(item.price * (1 - DISCOUNT));
               return React.createElement("div", { key: item.id, style: S.card },

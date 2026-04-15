@@ -106,6 +106,14 @@
       return new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS", maximumFractionDigits: 0 }).format(n);
     }
 
+    // GET — para init, getOrders, markDelivered (evita CORS)
+    async function apiGet(params) {
+      const qs = new URLSearchParams(params).toString();
+      const r = await fetch(APPS_SCRIPT_URL + "?" + qs);
+      return r.json();
+    }
+
+    // POST — solo para submitOrder (lleva base64 del comprobante)
     async function apiPost(payload) {
       const r = await fetch(APPS_SCRIPT_URL, {
         method: "POST",
@@ -211,7 +219,7 @@
       async function initBackend() {
         setLoading(true);
         try {
-          const res = await apiPost({ action: "init" });
+          const res = await apiGet({ action: "init" });
           if (res.ok) {
             setMeta({ backendOk: true, sheetUrl: res.spreadsheetUrl, driveUrl: res.folderUrl });
             toast_("Backend inicializado ✓");
@@ -224,9 +232,8 @@
       async function syncOrders() {
         setLoading(true);
         try {
-          const res = await fetch(`${APPS_SCRIPT_URL}?action=getOrders`);
-          const data = await res.json();
-          if (data.ok && data.orders.length > 0) {
+          const data = await apiGet({ action: "getOrders" });
+          if (data.ok && data.orders && data.orders.length > 0) {
             const merged = data.orders.map(r => {
               const loc = orders.find(o => String(o.number) === String(r.number));
               return loc ? { ...loc, delivered: r.delivered } : {
@@ -292,7 +299,7 @@
         setOrders(prev => prev.map(x => x.number === o.number ? { ...x, delivered: true } : x));
         if (result && !result.multi) setResult(p => ({ ...p, delivered: true }));
         try {
-          const res = await apiPost({ action: "markDelivered", number: o.number });
+          const res = await apiGet({ action: "markDelivered", number: o.number });
           toast_(res.ok ? `Pedido #${o.number} entregado ✓` : `#${o.number} entregado (sin sync)`, res.ok ? "ok" : "warn");
         } catch { toast_(`#${o.number} entregado (sin sync)`, "warn"); }
       }

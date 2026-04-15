@@ -58,7 +58,7 @@
     // ═══════════════════════════════════════════════════════════════
     //  ⚙️  CONFIGURACIÓN — editá estas líneas antes de deployar
     // ═══════════════════════════════════════════════════════════════
-    const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycby4lGlYKtFHgmsnb2G4IozOO4YSiBDHdo2Xy7b4Q4ENrJhVJ8cWqJP9sANASUm6Qh3q/exec";
+    const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwxz_H9JYxMTP5S5Rj--VbOSyruNryYeRsO2KJdp0CcUNxJIVIWC2O8xIltl3jFzTDc/exec";
     const KIOSK_PIN = "1928";   // PIN para acceder al panel de entregas
     // Estos valores son defaults — se sobreescriben con los de la pestaña Config de Sheets
     const DEFAULTS = {
@@ -218,6 +218,10 @@
 
       const backendOk = meta.backendOk || false;
       const [backendVerified, setBackendVerified] = useState(null); // null=no chequeado, true/false
+      const [resetConfirm, setResetConfirm] = useState(false);
+      const [resetting, setResetting] = useState(false);
+      const [adminPin, setAdminPin] = useState("");
+      const [adminPinError, setAdminPinError] = useState(false);
 
       useEffect(() => { saveLocal(LOCAL_KEY, orders); }, [orders]);
       useEffect(() => { saveLocal(LOCAL_META, meta); }, [meta]);
@@ -451,6 +455,42 @@ No agregues ningún texto fuera del JSON.`
           toast_("Sin conexión — pedido guardado localmente", "warn");
         }
         setLoading(false);
+      }
+
+      // Reset completo para producción
+      async function resetAll() {
+        setResetting(true);
+        try {
+          // 1. Borra filas de datos en Sheets (conserva header y pestañas Menu/Config)
+          const res = await apiGet({ action: "reset" });
+          if (!res.ok) throw new Error(res.error || "Error en backend");
+
+          // 2. Limpia localStorage de este browser
+          const keysToKeep = ["kiosko_meta_v3", "kiosko_config_v3", "kiosko_menu_v3"];
+          const allKeys = Object.keys(localStorage);
+          allKeys.forEach(k => {
+            if (!keysToKeep.includes(k)) localStorage.removeItem(k);
+          });
+          // Limpia también versiones anteriores de pedidos
+          ["kiosko_orders_v1", "kiosko_orders_v2", "kiosko_orders_v3",
+            "kiosko_meta_v1", "kiosko_meta_v2"].forEach(k => localStorage.removeItem(k));
+
+          // 3. Resetea estado en memoria
+          setOrders([]);
+          setCart({});
+          setSubmitted(null);
+          setSearch("");
+          setResult(null);
+          setSearched(false);
+
+          setResetConfirm(false);
+          setAdminPin("");
+          setAdminPinError(false);
+          toast_("✓ Reset completo — la app está lista para producción");
+        } catch (e) {
+          toast_("Error al resetear: " + e.message, "err");
+        }
+        setResetting(false);
       }
 
       // Búsqueda
@@ -825,10 +865,64 @@ No agregues ningún texto fuera del JSON.`
               )
             ),
 
+            // ── Reset para producción ──
+            backendVerified === true && React.createElement("div", { style: { background: C.redLight, border: `1px solid #f09595`, borderRadius: 12, padding: "14px 16px", marginBottom: 8 } },
+              React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: C.red, marginBottom: 4 } }, "⚠ Zona de peligro"),
+              React.createElement("div", { style: { fontSize: 12, color: C.red, marginBottom: 12, opacity: 0.85 } },
+                "Borra todos los pedidos de la planilla y limpia el localStorage. Usá solo antes del lanzamiento real."
+              ),
+              React.createElement("button", {
+                style: { ...S.primBtn, width: "100%", padding: "10px 0", background: C.red, opacity: resetting ? 0.6 : 1 },
+                onClick: () => setResetConfirm(true), disabled: resetting
+              }, "🗑 Resetear para producción")
+            ),
+
+            // ── Botón inicializar ──
             React.createElement("button", {
               style: { ...S.primBtn, width: "100%", padding: "12px 0", opacity: loading ? 0.6 : 1 },
               onClick: initBackend, disabled: loading
-            }, loading ? "Inicializando…" : backendVerified === true ? "↻ Re-inicializar backend" : "Inicializar backend en Google")
+            }, loading ? "Inicializando…" : backendVerified === true ? "↻ Re-inicializar backend" : "Inicializar backend en Google"),
+
+            // ── Modal de confirmación reset ──
+            resetConfirm && React.createElement("div", { style: { ...S.overlay, position: "fixed" } },
+              React.createElement("div", { style: { ...S.modal, maxWidth: 340 } },
+                React.createElement("div", { style: { fontSize: 32, marginBottom: 8 } }, "⚠️"),
+                React.createElement("div", { style: { fontSize: 17, fontWeight: 700, color: C.red, marginBottom: 8 } }, "¿Resetear todo?"),
+                React.createElement("div", { style: { fontSize: 13, color: C.textMuted, marginBottom: 6 } }, "Esta acción va a:"),
+                React.createElement("ul", { style: { fontSize: 12, color: C.text, textAlign: "left", paddingLeft: 20, marginBottom: 16, lineHeight: 2 } },
+                  React.createElement("li", null, "Borrar todos los pedidos de la planilla"),
+                  React.createElement("li", null, "Limpiar el historial de este browser"),
+                  React.createElement("li", null, "El próximo pedido comenzará con #1"),
+                  React.createElement("li", null, "El menú y la configuración se conservan")
+                ),
+                React.createElement("div", { style: { fontSize: 12, fontWeight: 600, color: C.red, marginBottom: 12 } },
+                  "Esta operación no se puede deshacer."
+                ),
+                React.createElement("div", { style: { marginBottom: 16 } },
+                  React.createElement("div", { style: { fontSize: 12, color: C.textMuted, marginBottom: 6, textAlign: "left" } }, "PIN de administrador"),
+                  React.createElement("input", {
+                    type: "password",
+                    style: {
+                      ...S.input, textAlign: "center", letterSpacing: 8, fontSize: 20,
+                      borderColor: adminPinError ? C.red : C.border,
+                      borderWidth: adminPinError ? 2 : 1
+                    },
+                    placeholder: "••••", maxLength: 4, value: adminPin,
+                    onChange: e => { setAdminPin(e.target.value); setAdminPinError(false); },
+                    onKeyDown: e => { if (e.key === "Enter") { if (adminPin === "1749") resetAll(); else setAdminPinError(true); } }
+                  }),
+                  adminPinError && React.createElement("div", { style: { fontSize: 12, color: C.red, marginTop: 5 } }, "PIN incorrecto")
+                ),
+                React.createElement("div", { style: { display: "flex", gap: 10, justifyContent: "center" } },
+                  React.createElement("button", { style: S.ghostBtn, onClick: () => { setResetConfirm(false); setAdminPin(""); setAdminPinError(false); } }, "Cancelar"),
+                  React.createElement("button", {
+                    style: { ...S.greenBtn, background: C.red, opacity: resetting ? 0.6 : 1 },
+                    onClick: () => { if (adminPin === "1749") resetAll(); else setAdminPinError(true); },
+                    disabled: resetting
+                  }, resetting ? "Reseteando…" : "Confirmar reset")
+                )
+              )
+            )
           )
         )
       );

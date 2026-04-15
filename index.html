@@ -230,10 +230,18 @@
             .then(res => {
               if (res.ok) {
                 setBackendVerified(true);
-                // Si el meta no tenía backendOk, lo actualiza
                 if (!meta.backendOk) setMeta(m => ({ ...m, backendOk: true }));
+                // Si no tenemos las URLs, las obtenemos con init (no crea duplicados, solo devuelve los IDs existentes)
+                if (!meta.sheetUrl) {
+                  return apiGet({ action: "init" });
+                }
               } else {
                 setBackendVerified(false);
+              }
+            })
+            .then(res => {
+              if (res && res.ok && res.spreadsheetUrl) {
+                setMeta(m => ({ ...m, backendOk: true, sheetUrl: res.spreadsheetUrl, driveUrl: res.folderUrl }));
               }
             })
             .catch(() => setBackendVerified(false));
@@ -298,6 +306,7 @@
           const res = await apiGet({ action: "init" });
           if (res.ok) {
             setMeta({ backendOk: true, sheetUrl: res.spreadsheetUrl, driveUrl: res.folderUrl });
+            setBackendVerified(true);
             toast_("Backend inicializado ✓");
           } else toast_("Error: " + res.error, "err");
         } catch { toast_("No se pudo conectar al backend", "err"); }
@@ -746,26 +755,65 @@ No agregues ningún texto fuera del JSON.`
           kioskTab === "config" && React.createElement("div", null,
             React.createElement("div", { style: { fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 16 } }, "Configuración del backend"),
 
-            React.createElement("div", { style: S.card },
-              React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 6 } }, "Estado"),
-              React.createElement("div", {
-                style: {
-                  fontSize: 13, color:
-                    backendVerified === null ? C.textMuted :
-                      backendVerified === true ? C.green : C.amber
-                }
-              },
-                backendVerified === null ? "⏳ Verificando conexión…" :
-                  backendVerified === true ? "✓ Conectado a Google Apps Script" :
-                    "⚠ Sin conexión con el backend"
+            // ── Estado de conexión ──
+            React.createElement("div", { style: { ...S.card, marginBottom: 8 } },
+              React.createElement("div", { style: { fontSize: 12, fontWeight: 600, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 } }, "Estado"),
+              React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: (backendVerified === true) ? 14 : 0 } },
+                React.createElement("div", {
+                  style: {
+                    width: 10, height: 10, borderRadius: "50%", flexShrink: 0,
+                    background: backendVerified === null ? C.textLight : backendVerified === true ? C.green : C.amber
+                  }
+                }),
+                React.createElement("div", {
+                  style: {
+                    fontSize: 13, fontWeight: 600, color:
+                      backendVerified === null ? C.textMuted :
+                        backendVerified === true ? C.green : C.amber
+                  }
+                },
+                  backendVerified === null ? "Verificando conexión…" :
+                    backendVerified === true ? "Conectado a Google Apps Script" :
+                      "Sin conexión con el backend"
+                )
               ),
-              (backendOk || backendVerified) && meta.sheetUrl && React.createElement("div", { style: { marginTop: 8, display: "flex", flexDirection: "column", gap: 5 } },
-                React.createElement("a", { href: meta.sheetUrl, target: "_blank", rel: "noreferrer", style: { fontSize: 12 } }, "📊 Abrir Google Sheet"),
-                React.createElement("a", { href: meta.driveUrl, target: "_blank", rel: "noreferrer", style: { fontSize: 12 } }, "📁 Abrir carpeta en Drive")
+              // Links visibles solo cuando está conectado
+              backendVerified === true && React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } },
+                React.createElement("a", {
+                  href: meta.sheetUrl || "#",
+                  target: "_blank", rel: "noreferrer",
+                  style: {
+                    display: "flex", alignItems: "center", gap: 10, padding: "10px 12px",
+                    background: C.blueLight, border: `1px solid ${C.blueBorder}`,
+                    borderRadius: 8, textDecoration: "none", color: C.blue, fontSize: 13, fontWeight: 600
+                  }
+                },
+                  React.createElement("span", { style: { fontSize: 18 } }, "📊"),
+                  React.createElement("div", null,
+                    React.createElement("div", null, "Ver Google Sheet — Pedidos"),
+                    React.createElement("div", { style: { fontSize: 11, fontWeight: 400, color: C.textMuted, marginTop: 1 } }, "Tabla con todos los pedidos y estados")
+                  )
+                ),
+                React.createElement("a", {
+                  href: meta.driveUrl || "#",
+                  target: "_blank", rel: "noreferrer",
+                  style: {
+                    display: "flex", alignItems: "center", gap: 10, padding: "10px 12px",
+                    background: C.greenLight, border: `1px solid ${C.greenBorder}`,
+                    borderRadius: 8, textDecoration: "none", color: C.green, fontSize: 13, fontWeight: 600
+                  }
+                },
+                  React.createElement("span", { style: { fontSize: 18 } }, "📁"),
+                  React.createElement("div", null,
+                    React.createElement("div", null, "Ver carpeta en Drive — Comprobantes"),
+                    React.createElement("div", { style: { fontSize: 11, fontWeight: 400, color: C.textMuted, marginTop: 1 } }, "Archivos subidos por los clientes")
+                  )
+                )
               )
             ),
 
-            React.createElement("div", { style: { ...S.card, background: C.grayLight } },
+            // ── Pasos de configuración (solo si no está conectado) ──
+            backendVerified !== true && React.createElement("div", { style: { ...S.card, background: C.grayLight, marginBottom: 8 } },
               React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 8 } }, "Pasos para configurar"),
               React.createElement("ol", { style: { fontSize: 12, color: C.textMuted, paddingLeft: 16, lineHeight: 1.9 } },
                 React.createElement("li", null, "Abrí ", React.createElement("a", { href: "https://script.google.com", target: "_blank" }, "script.google.com"), " con la cuenta Gmail del evento"),
@@ -780,7 +828,7 @@ No agregues ningún texto fuera del JSON.`
             React.createElement("button", {
               style: { ...S.primBtn, width: "100%", padding: "12px 0", opacity: loading ? 0.6 : 1 },
               onClick: initBackend, disabled: loading
-            }, loading ? "Inicializando…" : "Inicializar backend en Google")
+            }, loading ? "Inicializando…" : backendVerified === true ? "↻ Re-inicializar backend" : "Inicializar backend en Google")
           )
         )
       );

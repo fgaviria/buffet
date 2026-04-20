@@ -58,7 +58,7 @@
     // ═══════════════════════════════════════════════════════════════
     //  ⚙️  CONFIGURACIÓN — editá estas líneas antes de deployar
     // ═══════════════════════════════════════════════════════════════
-    const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwH__Dmatmmfd1kv6B7P9mb47P0sisXKuAv4E88v93sEHUuNI9CGY9AQFzNiaPH2DzG/exec";
+    const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxHtCeUfShpe17vcnY_PeX6M9ZufAfQZwdpGEpQNPh8iIu0tU2vOAcLlZn6sTCrb6cH/exec";
     const KIOSK_PIN = "1928";   // PIN para acceder al panel de entregas
     // Estos valores son defaults — se sobreescriben con los de la pestaña Config de Sheets
     const DEFAULTS = {
@@ -829,8 +829,15 @@ No agregues ningún texto fuera del JSON.`
                   setCajasUnlocked(true);
                   setCajasLoading(true);
                   apiGet({ action: "getMenuCajas" })
-                    .then(res => { if (res.ok && res.menu && res.menu.length) setCajasMenu(res.menu); })
-                    .catch(() => toast_("Error al cargar menú de cajas", "err"))
+                    .then(res => {
+                      if (res.ok && res.menu && res.menu.length) {
+                        setCajasMenu(res.menu);
+                        toast_(res.menu.length + " productos cargados");
+                      } else {
+                        toast_("Sin productos: " + (res.debug || res.error || "respuesta vacía"), "warn");
+                      }
+                    })
+                    .catch(e => toast_("Error: " + e.message, "err"))
                     .finally(() => setCajasLoading(false));
                 } else { toast_("PIN incorrecto", "err"); }
               }
@@ -842,8 +849,15 @@ No agregues ningún texto fuera del JSON.`
                 setCajasUnlocked(true);
                 setCajasLoading(true);
                 apiGet({ action: "getMenuCajas" })
-                  .then(res => { if (res.ok && res.menu && res.menu.length) setCajasMenu(res.menu); })
-                  .catch(() => toast_("Error al cargar menú de cajas", "err"))
+                  .then(res => {
+                    if (res.ok && res.menu && res.menu.length) {
+                      setCajasMenu(res.menu);
+                      toast_(res.menu.length + " productos cargados");
+                    } else {
+                      toast_("Sin productos: " + (res.debug || res.error || "respuesta vacía"), "warn");
+                    }
+                  })
+                  .catch(e => toast_("Error: " + e.message, "err"))
                   .finally(() => setCajasLoading(false));
               } else { toast_("PIN incorrecto", "err"); }
             }
@@ -874,7 +888,15 @@ No agregues ningún texto fuera del JSON.`
                 onClick: () => {
                   setCajasLoading(true);
                   apiGet({ action: "getMenuCajas" })
-                    .then(res => { if (res.ok && res.menu) setCajasMenu(res.menu); })
+                    .then(res => {
+                      if (res.ok && res.menu && res.menu.length) {
+                        setCajasMenu(res.menu);
+                        toast_(res.menu.length + " productos actualizados");
+                      } else {
+                        toast_("Sin productos: " + (res.debug || res.error || "vacío"), "warn");
+                      }
+                    })
+                    .catch(e => toast_("Error: " + e.message, "err"))
                     .finally(() => setCajasLoading(false));
                 }
               }, "↻ Actualizar menú"),
@@ -892,6 +914,7 @@ No agregues ningún texto fuera del JSON.`
                 React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 } },
                   React.createElement("div", { style: { flex: 1 } },
                     React.createElement("div", { style: { fontSize: 14, fontWeight: 600, color: C.text } }, item.emoji + " " + item.name),
+                    item.desc && React.createElement("div", { style: { fontSize: 11, color: C.textMuted, marginTop: 1 } }, item.desc),
                     React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: C.blue, marginTop: 3 } }, fmt(item.price))
                   ),
                   React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8 } },

@@ -505,7 +505,7 @@ No agregues ningún texto fuera del JSON.`
       async function downloadTicket() {
         const el = document.getElementById("ticket-card");
         if (!el) return;
-        // Usa html2canvas via CDN cargado dinámicamente
+        // Carga html2canvas dinámicamente
         if (!window.html2canvas) {
           await new Promise((res, rej) => {
             const s = document.createElement("script");
@@ -515,13 +515,48 @@ No agregues ningún texto fuera del JSON.`
           });
         }
         const canvas = await window.html2canvas(el, {
-          scale: 3, useCORS: true, backgroundColor: "#ffffff",
-          logging: false
+          scale: 3, useCORS: true, backgroundColor: "#ffffff", logging: false
         });
-        const link = document.createElement("a");
-        link.download = `BuffetFamily-Pedido-${submitted.number}.png`;
-        link.href = canvas.toDataURL("image/png");
-        link.click();
+
+        const fileName = `BuffetFamily-Pedido-${submitted.number}.png`;
+
+        // Intenta Web Share API (iOS/Android → guarda directo en carrete)
+        if (navigator.share && navigator.canShare) {
+          try {
+            canvas.toBlob(async (blob) => {
+              const file = new File([blob], fileName, { type: "image/png" });
+              if (navigator.canShare({ files: [file] })) {
+                await navigator.share({
+                  files: [file],
+                  title: `Pedido #${submitted.number} — Buffet Family`,
+                });
+                return;
+              }
+              // canShare devuelve false — fallback
+              fallbackSave(canvas, fileName);
+            }, "image/png");
+            return;
+          } catch (e) {
+            if (e.name !== "AbortError") fallbackSave(canvas, fileName);
+          }
+        } else {
+          // Desktop o browser sin Web Share API
+          fallbackSave(canvas, fileName);
+        }
+      }
+
+      function fallbackSave(canvas, fileName) {
+        // Abre la imagen en una pestaña nueva para que el usuario la guarde manualmente
+        const win = window.open("", "_blank");
+        if (win) {
+          win.document.write(
+            `<html><head><title>${fileName}</title></head><body style="margin:0;background:#111;display:flex;align-items:center;justify-content:center;min-height:100vh">` +
+            `<div style="text-align:center">` +
+            `<img src="${canvas.toDataURL("image/png")}" style="max-width:100%;border-radius:12px">` +
+            `<p style="color:#fff;font-family:sans-serif;margin-top:12px;font-size:14px">Mantené presionada la imagen para guardarla en tu carrete 📲</p>` +
+            `</div></body></html>`
+          );
+        }
       }
 
       // Búsqueda
@@ -792,12 +827,11 @@ No agregues ningún texto fuera del JSON.`
               if (e.key === "Enter") {
                 if (cajasPin === "1928") {
                   setCajasUnlocked(true);
-                  if (!cajasMenu.length && !APPS_SCRIPT_URL.includes("TU_DEPLOYMENT_ID")) {
-                    setCajasLoading(true);
-                    apiGet({ action: "getMenuCajas" })
-                      .then(res => { if (res.ok && res.menu) setCajasMenu(res.menu); })
-                      .finally(() => setCajasLoading(false));
-                  }
+                  setCajasLoading(true);
+                  apiGet({ action: "getMenuCajas" })
+                    .then(res => { if (res.ok && res.menu && res.menu.length) setCajasMenu(res.menu); })
+                    .catch(() => toast_("Error al cargar menú de cajas", "err"))
+                    .finally(() => setCajasLoading(false));
                 } else { toast_("PIN incorrecto", "err"); }
               }
             }
@@ -806,12 +840,11 @@ No agregues ningún texto fuera del JSON.`
             style: S.primBtn, onClick: () => {
               if (cajasPin === "1928") {
                 setCajasUnlocked(true);
-                if (!cajasMenu.length && !APPS_SCRIPT_URL.includes("TU_DEPLOYMENT_ID")) {
-                  setCajasLoading(true);
-                  apiGet({ action: "getMenuCajas" })
-                    .then(res => { if (res.ok && res.menu) setCajasMenu(res.menu); })
-                    .finally(() => setCajasLoading(false));
-                }
+                setCajasLoading(true);
+                apiGet({ action: "getMenuCajas" })
+                  .then(res => { if (res.ok && res.menu && res.menu.length) setCajasMenu(res.menu); })
+                  .catch(() => toast_("Error al cargar menú de cajas", "err"))
+                  .finally(() => setCajasLoading(false));
               } else { toast_("PIN incorrecto", "err"); }
             }
           }, "Ingresar"),

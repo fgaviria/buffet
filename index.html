@@ -58,7 +58,7 @@
     // ═══════════════════════════════════════════════════════════════
     //  ⚙️  CONFIGURACIÓN — editá estas líneas antes de deployar
     // ═══════════════════════════════════════════════════════════════
-    const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwxz_H9JYxMTP5S5Rj--VbOSyruNryYeRsO2KJdp0CcUNxJIVIWC2O8xIltl3jFzTDc/exec";
+    const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwH__Dmatmmfd1kv6B7P9mb47P0sisXKuAv4E88v93sEHUuNI9CGY9AQFzNiaPH2DzG/exec";
     const KIOSK_PIN = "1928";   // PIN para acceder al panel de entregas
     // Estos valores son defaults — se sobreescriben con los de la pestaña Config de Sheets
     const DEFAULTS = {
@@ -220,6 +220,14 @@
       const [backendVerified, setBackendVerified] = useState(null); // null=no chequeado, true/false
       const [resetConfirm, setResetConfirm] = useState(false);
       const [resetting, setResetting] = useState(false);
+      // Cajas
+      const [cajasUnlocked, setCajasUnlocked] = useState(false);
+      const [cajasPin, setCajasPin] = useState("");
+      const [cajasMenu, setCajasMenu] = useState([]);
+      const [cajasCart, setCajasCart] = useState({});
+      const [cajasMetodo, setCajasMetodo] = useState(null); // "Efectivo"|"MercadoPago"
+      const [cajasLoading, setCajasLoading] = useState(false);
+      const [cajasSubmitted, setCajasSubmitted] = useState(null);
       const [adminPin, setAdminPin] = useState("");
       const [adminPinError, setAdminPinError] = useState(false);
 
@@ -493,6 +501,29 @@ No agregues ningún texto fuera del JSON.`
         setResetting(false);
       }
 
+      // US1: Genera y descarga imagen del ticket como PNG
+      async function downloadTicket() {
+        const el = document.getElementById("ticket-card");
+        if (!el) return;
+        // Usa html2canvas via CDN cargado dinámicamente
+        if (!window.html2canvas) {
+          await new Promise((res, rej) => {
+            const s = document.createElement("script");
+            s.src = "https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js";
+            s.onload = res; s.onerror = rej;
+            document.head.appendChild(s);
+          });
+        }
+        const canvas = await window.html2canvas(el, {
+          scale: 3, useCORS: true, backgroundColor: "#ffffff",
+          logging: false
+        });
+        const link = document.createElement("a");
+        link.download = `BuffetFamily-Pedido-${submitted.number}.png`;
+        link.href = canvas.toDataURL("image/png");
+        link.click();
+      }
+
       // Búsqueda
       function doSearch() {
         setSearched(true);
@@ -565,7 +596,8 @@ No agregues ningún texto fuera del JSON.`
           ),
           React.createElement("div", { style: { display: "flex", gap: 6 } },
             React.createElement("button", { style: S.navBtn(view === "home" || view === "done"), onClick: () => setView("home") }, "Pedir"),
-            React.createElement("button", { style: S.navBtn(view === "kiosk"), onClick: () => { setView("kiosk"); setSearch(""); setResult(null); setSearched(false); setKioskTab("buscar"); } }, "Entregar")
+            React.createElement("button", { style: S.navBtn(view === "kiosk"), onClick: () => { setView("kiosk"); setSearch(""); setResult(null); setSearched(false); setKioskTab("buscar"); } }, "Entregar"),
+            React.createElement("button", { style: S.navBtn(view === "cajas"), onClick: () => { setView("cajas"); setCajasSubmitted(null); setCajasCart({}); setCajasMetodo(null); } }, "Cajas")
           )
         ),
 
@@ -708,27 +740,196 @@ No agregues ningún texto fuera del JSON.`
         view === "done" && submitted && React.createElement("div", { style: { textAlign: "center", padding: "24px 0" } },
           React.createElement("div", { style: { fontSize: 48, marginBottom: 10 } }, "✅"),
           React.createElement("div", { style: { fontSize: 19, fontWeight: 700, color: C.text, marginBottom: 4 } }, "¡Pedido confirmado!"),
-          React.createElement("div", { style: { fontSize: 13, color: C.textMuted, marginBottom: 6 } }, "Guardá tu número de pedido"),
-          React.createElement("div", { style: { fontSize: 60, fontWeight: 700, color: C.blue, margin: "10px 0 14px" } }, "#" + submitted.number),
-          React.createElement("div", { style: S.card },
-            React.createElement("div", { style: { fontSize: 12, color: C.textMuted, marginBottom: 8 } }, "Detalle del pedido"),
-            submitted.items.map(i => React.createElement("div", { key: i.id, style: { display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 3, color: C.text } },
-              React.createElement("span", null, i.qty + "x " + i.name),
-              React.createElement("span", null, fmt(Math.round(i.price * i.qty * (1 - config.discount))))
+          React.createElement("div", { style: { fontSize: 13, color: C.textMuted, marginBottom: 10 } }, "Guardá la imagen de tu pedido en el celular"),
+
+          // ── Ticket descargable ──
+          React.createElement("div", {
+            id: "ticket-card",
+            style: { background: C.white, border: `2px solid ${C.blue}`, borderRadius: 16, padding: "20px 18px", marginBottom: 12, textAlign: "center" }
+          },
+            React.createElement("div", { style: { fontSize: 13, fontWeight: 700, color: C.textMuted, letterSpacing: "0.08em", marginBottom: 4 } }, config.eventoNombre.toUpperCase()),
+            React.createElement("div", { style: { fontSize: 11, color: C.textLight, marginBottom: 12 } }, config.eventoSubtitulo),
+            React.createElement("div", { style: { fontSize: 11, color: C.textMuted, marginBottom: 2 } }, "N° DE PEDIDO"),
+            React.createElement("div", { style: { fontSize: 72, fontWeight: 700, color: C.blue, lineHeight: 1, margin: "4px 0 12px" } }, "#" + submitted.number),
+            React.createElement("div", { style: { borderTop: `1px solid ${C.border}`, paddingTop: 10, marginBottom: 10 } },
+              submitted.items.map((i, idx) => React.createElement("div", { key: idx, style: { display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 3, color: C.text } },
+                React.createElement("span", null, i.qty + "x " + i.name),
+                React.createElement("span", { style: { fontWeight: 600 } }, fmt(Math.round(i.price * i.qty * (1 - config.discount))))
+              ))
+            ),
+            React.createElement("div", { style: { borderTop: `1px solid ${C.border}`, paddingTop: 8, display: "flex", justifyContent: "space-between", fontSize: 14, fontWeight: 700, color: C.text } },
+              React.createElement("span", null, "Total pagado"), React.createElement("span", { style: { color: C.blue } }, fmt(submitted.total))
+            ),
+            React.createElement("div", { style: { marginTop: 12, fontSize: 11, color: C.textMuted, background: C.blueLight, borderRadius: 8, padding: "6px 10px" } },
+              "Presentá este número en el buffet el día del evento"
+            )
+          ),
+
+          // ── Botón descargar imagen ──
+          React.createElement("button", {
+            style: { ...S.primBtn, width: "100%", padding: "12px 0", marginBottom: 8, fontSize: 14 },
+            onClick: downloadTicket
+          }, "📲 Guardar imagen del pedido"),
+
+          submitted.fileUrl
+            ? React.createElement("div", { style: { fontSize: 11, color: C.green, marginBottom: 8 } }, "📎 Comprobante subido a Drive ✓")
+            : React.createElement("div", { style: { fontSize: 11, color: C.amber, marginBottom: 8 } }, "⏳ " + submitted.fileName + " (pendiente de sync)"),
+
+          React.createElement("button", { style: { ...S.ghostBtn, width: "100%" }, onClick: () => setView("home") }, "Hacer otro pedido")
+        ),
+
+        // ── CAJAS LOGIN ──
+        view === "cajas" && !cajasUnlocked && React.createElement("div", { style: { textAlign: "center", padding: "48px 0" } },
+          React.createElement("div", { style: { fontSize: 40, marginBottom: 10 } }, "🏪"),
+          React.createElement("div", { style: { fontSize: 17, fontWeight: 700, marginBottom: 4, color: C.text } }, "Módulo de Cajas"),
+          React.createElement("div", { style: { fontSize: 13, color: C.textMuted, marginBottom: 22 } }, "Ingresá el PIN para continuar"),
+          React.createElement("input", {
+            type: "password",
+            style: { ...S.input, textAlign: "center", letterSpacing: 10, fontSize: 22, maxWidth: 160, display: "block", margin: "0 auto 14px" },
+            placeholder: "••••", maxLength: 4, value: cajasPin,
+            onChange: e => setCajasPin(e.target.value),
+            onKeyDown: e => {
+              if (e.key === "Enter") {
+                if (cajasPin === "1928") {
+                  setCajasUnlocked(true);
+                  if (!cajasMenu.length && !APPS_SCRIPT_URL.includes("TU_DEPLOYMENT_ID")) {
+                    setCajasLoading(true);
+                    apiGet({ action: "getMenuCajas" })
+                      .then(res => { if (res.ok && res.menu) setCajasMenu(res.menu); })
+                      .finally(() => setCajasLoading(false));
+                  }
+                } else { toast_("PIN incorrecto", "err"); }
+              }
+            }
+          }),
+          React.createElement("button", {
+            style: S.primBtn, onClick: () => {
+              if (cajasPin === "1928") {
+                setCajasUnlocked(true);
+                if (!cajasMenu.length && !APPS_SCRIPT_URL.includes("TU_DEPLOYMENT_ID")) {
+                  setCajasLoading(true);
+                  apiGet({ action: "getMenuCajas" })
+                    .then(res => { if (res.ok && res.menu) setCajasMenu(res.menu); })
+                    .finally(() => setCajasLoading(false));
+                }
+              } else { toast_("PIN incorrecto", "err"); }
+            }
+          }, "Ingresar"),
+          React.createElement("div", { style: { fontSize: 11, color: C.textLight, marginTop: 10 } }, "PIN del equipo de cajas")
+        ),
+
+        // ── CAJAS PANEL ──
+        view === "cajas" && cajasUnlocked && React.createElement("div", null,
+
+          // Confirmación de venta exitosa
+          cajasSubmitted && React.createElement("div", { style: { ...S.succCard, marginBottom: 14, textAlign: "center" } },
+            React.createElement("div", { style: { fontSize: 22, marginBottom: 4 } }, "✅"),
+            React.createElement("div", { style: { fontSize: 15, fontWeight: 700, color: C.green } }, "Venta registrada"),
+            React.createElement("div", { style: { fontSize: 13, color: C.green } }, "Pedido #" + cajasSubmitted.number + " · " + cajasSubmitted.metodo),
+            React.createElement("div", { style: { fontSize: 12, color: C.green, marginTop: 2 } }, fmt(cajasSubmitted.total))
+          ),
+
+          // Header
+          React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 } },
+            React.createElement("div", null,
+              React.createElement("div", { style: { fontSize: 15, fontWeight: 700, color: C.text } }, "Caja — nueva venta"),
+              cajasLoading && React.createElement("div", { style: { fontSize: 12, color: C.textMuted } }, "Cargando menú…")
+            ),
+            React.createElement("div", { style: { display: "flex", gap: 6 } },
+              React.createElement("button", {
+                style: { ...S.ghostBtn, fontSize: 12 },
+                onClick: () => {
+                  setCajasLoading(true);
+                  apiGet({ action: "getMenuCajas" })
+                    .then(res => { if (res.ok && res.menu) setCajasMenu(res.menu); })
+                    .finally(() => setCajasLoading(false));
+                }
+              }, "↻ Actualizar menú"),
+              React.createElement("button", { style: { ...S.ghostBtn, fontSize: 12 }, onClick: () => { setCajasUnlocked(false); setCajasPin(""); setCajasCart({}); setCajasMetodo(null); setCajasSubmitted(null); } }, "Salir")
+            )
+          ),
+
+          // Menú de cajas
+          React.createElement("div", { style: S.sec },
+            React.createElement("div", { style: S.secTitle }, "Productos"),
+            cajasMenu.length === 0 && !cajasLoading && React.createElement("div", { style: { fontSize: 13, color: C.textLight, padding: "10px 0" } }, "Cargando productos desde Sheets…"),
+            cajasMenu.map(item => {
+              const qty = cajasCart[item.id] || 0;
+              return React.createElement("div", { key: item.id, style: S.card },
+                React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 } },
+                  React.createElement("div", { style: { flex: 1 } },
+                    React.createElement("div", { style: { fontSize: 14, fontWeight: 600, color: C.text } }, item.emoji + " " + item.name),
+                    React.createElement("div", { style: { fontSize: 14, fontWeight: 700, color: C.blue, marginTop: 3 } }, fmt(item.price))
+                  ),
+                  React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8 } },
+                    qty > 0 && React.createElement("button", { style: S.qBtn, onClick: () => setCajasCart(c => { const n = { ...c }; n[item.id] > 1 ? n[item.id]-- : delete n[item.id]; return n; }) }, "−"),
+                    qty > 0 && React.createElement("span", { style: { fontSize: 14, fontWeight: 700, minWidth: 16, textAlign: "center" } }, qty),
+                    React.createElement("button", { style: S.qBtn, onClick: () => setCajasCart(c => ({ ...c, [item.id]: (c[item.id] || 0) + 1 })) }, "+")
+                  )
+                )
+              );
+            })
+          ),
+
+          // Resumen del carrito
+          Object.keys(cajasCart).length > 0 && React.createElement("div", { style: { ...S.infoCard, marginBottom: 14 } },
+            React.createElement("div", { style: { fontSize: 13, fontWeight: 700, color: C.blue, marginBottom: 8 } }, "Venta actual"),
+            cajasMenu.filter(i => cajasCart[i.id] > 0).map(i => React.createElement("div", { key: i.id, style: { display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 3, color: C.text } },
+              React.createElement("span", null, cajasCart[i.id] + "x " + i.name),
+              React.createElement("span", null, fmt(i.price * cajasCart[i.id]))
             )),
             React.createElement("div", { style: S.divider }),
-            React.createElement("div", { style: { display: "flex", justifyContent: "space-between", fontSize: 14, fontWeight: 700, color: C.text } },
-              React.createElement("span", null, "Total pagado"), React.createElement("span", null, fmt(submitted.total))
-            ),
-            submitted.fileUrl
-              ? React.createElement("div", { style: { fontSize: 11, color: C.green, marginTop: 6 } }, "📎 Comprobante subido a Drive ✓")
-              : React.createElement("div", { style: { fontSize: 11, color: C.amber, marginTop: 6 } }, "⏳ " + submitted.fileName + " (pendiente de sync)")
+            React.createElement("div", { style: { display: "flex", justifyContent: "space-between", fontWeight: 700, fontSize: 15, color: C.blue } },
+              React.createElement("span", null, "Total"),
+              React.createElement("span", null, fmt(cajasMenu.filter(i => cajasCart[i.id] > 0).reduce((s, i) => s + i.price * (cajasCart[i.id] || 0), 0)))
+            )
           ),
-          React.createElement("div", { style: { ...S.warnCard, marginTop: 10 } },
-            "Presentá el número ", React.createElement("strong", null, "#" + submitted.number), " en el kiosco el día del evento"
+
+          // Medio de pago
+          Object.keys(cajasCart).length > 0 && React.createElement("div", { style: S.sec },
+            React.createElement("div", { style: S.secTitle }, "Medio de pago"),
+            React.createElement("div", { style: { display: "flex", gap: 10 } },
+              React.createElement("button", {
+                style: { flex: 1, padding: "12px 0", fontSize: 14, fontWeight: 600, cursor: "pointer", borderRadius: 8, border: `2px solid ${cajasMetodo === "Efectivo" ? C.green : C.border}`, background: cajasMetodo === "Efectivo" ? C.greenLight : C.white, color: cajasMetodo === "Efectivo" ? C.green : C.text },
+                onClick: () => setCajasMetodo("Efectivo")
+              }, "💵 Efectivo"),
+              React.createElement("button", {
+                style: { flex: 1, padding: "12px 0", fontSize: 14, fontWeight: 600, cursor: "pointer", borderRadius: 8, border: `2px solid ${cajasMetodo === "MercadoPago" ? C.blue : C.border}`, background: cajasMetodo === "MercadoPago" ? C.blueLight : C.white, color: cajasMetodo === "MercadoPago" ? C.blue : C.text },
+                onClick: () => setCajasMetodo("MercadoPago")
+              }, "📱 MercadoPago")
+            )
           ),
-          React.createElement("button", { style: { ...S.ghostBtn, marginTop: 14 }, onClick: () => setView("home") }, "Hacer otro pedido")
+
+          // Botón confirmar venta
+          Object.keys(cajasCart).length > 0 && cajasMetodo && React.createElement("button", {
+            style: {
+              ...S.primBtn, width: "100%", padding: "13px 0", fontSize: 15, opacity: cajasLoading ? 0.6 : 1,
+              background: cajasMetodo === "Efectivo" ? C.green : C.blue
+            },
+            disabled: cajasLoading,
+            onClick: async () => {
+              setCajasLoading(true);
+              setCajasSubmitted(null);
+              const cajasItems = cajasMenu.filter(i => cajasCart[i.id] > 0).map(i => ({ ...i, qty: cajasCart[i.id] }));
+              const cajasTotal = cajasItems.reduce((s, i) => s + i.price * i.qty, 0);
+              try {
+                const res = await apiPost({
+                  action: "submitCajaOrder",
+                  items: cajasItems, total: cajasTotal,
+                  metodoPago: cajasMetodo, cajero: "Caja"
+                });
+                if (!res.ok) throw new Error(res.error || "Error");
+                setCajasSubmitted({ number: res.orderNumber, total: cajasTotal, metodo: cajasMetodo });
+                setCajasCart({});
+                setCajasMetodo(null);
+              } catch (e) {
+                toast_("Error al registrar venta: " + e.message, "err");
+              }
+              setCajasLoading(false);
+            }
+          }, cajasLoading ? "Registrando…" : "Registrar venta → " + cajasMetodo)
         ),
+
 
         // ── KIOSCO LOGIN ──
         view === "kiosk" && !unlocked && React.createElement("div", { style: { textAlign: "center", padding: "48px 0" } },

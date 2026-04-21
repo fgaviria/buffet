@@ -222,6 +222,10 @@
       const [stats, setStats] = useState(null);
       const [statsLoading, setStatsLoading] = useState(false);
       const [resetting, setResetting] = useState(false);
+      // Stats
+      const [statsUnlocked, setStatsUnlocked] = useState(false);
+      const [statsPin, setStatsPin] = useState("");
+      const [statsPinError, setStatsPinError] = useState(false);
       // Cajas
       const [cajasUnlocked, setCajasUnlocked] = useState(false);
       const [cajasPin, setCajasPin] = useState("");
@@ -727,7 +731,8 @@ No agregues ningún texto fuera del JSON.`
           React.createElement("div", { style: { display: "flex", gap: 6 } },
             React.createElement("button", { style: S.navBtn(view === "home" || view === "done"), onClick: () => setView("home") }, "Pedir"),
             React.createElement("button", { style: S.navBtn(view === "kiosk"), onClick: () => { setView("kiosk"); setSearch(""); setResult(null); setSearched(false); setKioskTab("buscar"); } }, "Entregar"),
-            React.createElement("button", { style: S.navBtn(view === "cajas"), onClick: () => { setView("cajas"); setCajasSubmitted(null); setCajasCart({}); setCajasMetodo(null); } }, "Cajas")
+            React.createElement("button", { style: S.navBtn(view === "cajas"), onClick: () => { setView("cajas"); setCajasSubmitted(null); setCajasCart({}); setCajasMetodo(null); } }, "Cajas"),
+            React.createElement("button", { style: S.navBtn(view === "stats"), onClick: () => { setView("stats"); setStatsPinError(false); } }, "📊 Stats")
           )
         ),
 
@@ -907,6 +912,115 @@ No agregues ningún texto fuera del JSON.`
 
           React.createElement("button", { style: { ...S.ghostBtn, width: "100%" }, onClick: () => setView("home") }, "Hacer otro pedido")
         ),
+
+        // ── STATS LOGIN ──
+        view === "stats" && !statsUnlocked && React.createElement("div", { style: { textAlign: "center", padding: "48px 0" } },
+          React.createElement("div", { style: { fontSize: 40, marginBottom: 10 } }, "📊"),
+          React.createElement("div", { style: { fontSize: 17, fontWeight: 700, marginBottom: 4, color: C.text } }, "Estadísticas"),
+          React.createElement("div", { style: { fontSize: 13, color: C.textMuted, marginBottom: 22 } }, "Ingresá el PIN de administrador"),
+          React.createElement("input", {
+            type: "password",
+            style: {
+              ...S.input, textAlign: "center", letterSpacing: 10, fontSize: 22, maxWidth: 160, display: "block", margin: "0 auto 14px",
+              borderColor: statsPinError ? C.red : C.border, borderWidth: statsPinError ? 2 : 1
+            },
+            placeholder: "••••", maxLength: 4, value: statsPin,
+            onChange: e => { setStatsPin(e.target.value); setStatsPinError(false); },
+            onKeyDown: e => { if (e.key === "Enter") { if (statsPin === "1928") { setStatsUnlocked(true); if (!stats) loadStats(); } else setStatsPinError(true); } }
+          }),
+          statsPinError && React.createElement("div", { style: { fontSize: 12, color: C.red, marginBottom: 10 } }, "PIN incorrecto"),
+          React.createElement("button", { style: S.primBtn, onClick: () => { if (statsPin === "1928") { setStatsUnlocked(true); if (!stats) loadStats(); } else setStatsPinError(true); } }, "Ingresar"),
+          React.createElement("div", { style: { fontSize: 11, color: C.textLight, marginTop: 10 } }, "PIN del equipo de entrega")
+        ),
+
+        // ── STATS PANEL ──
+        view === "stats" && statsUnlocked && React.createElement("div", null,
+
+          React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 } },
+            React.createElement("div", { style: { fontSize: 15, fontWeight: 700, color: C.text } }, "Estadísticas de ventas"),
+            React.createElement("div", { style: { display: "flex", gap: 6 } },
+              React.createElement("button", {
+                style: { ...S.ghostBtn, fontSize: 12 },
+                onClick: loadStats, disabled: statsLoading
+              }, statsLoading ? "Calculando…" : "↻ Actualizar"),
+              React.createElement("button", { style: { ...S.ghostBtn, fontSize: 12 }, onClick: () => { setStatsUnlocked(false); setStatsPin(""); setStatsPinError(false); } }, "Salir")
+            )
+          ),
+
+          statsLoading && React.createElement("div", { style: { textAlign: "center", padding: "40px 0", color: C.textMuted, fontSize: 14 } }, "Calculando estadísticas…"),
+
+          !statsLoading && !stats && React.createElement("div", { style: { textAlign: "center", padding: "40px 0", color: C.textMuted, fontSize: 14 } },
+            "Tocá Actualizar para cargar las estadísticas"
+          ),
+
+          !statsLoading && stats && React.createElement("div", null,
+
+            React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 16 } },
+              React.createElement("div", { style: { background: C.blueLight, border: `1px solid ${C.blueBorder}`, borderRadius: 12, padding: "12px 14px", textAlign: "center" } },
+                React.createElement("div", { style: { fontSize: 11, color: C.blue, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 } }, "Pedidos"),
+                React.createElement("div", { style: { fontSize: 32, fontWeight: 700, color: C.blue } }, stats.totalPedidos)
+              ),
+              React.createElement("div", { style: { background: C.greenLight, border: `1px solid ${C.greenBorder}`, borderRadius: 12, padding: "12px 14px", textAlign: "center" } },
+                React.createElement("div", { style: { fontSize: 11, color: C.green, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 } }, "Recaudado"),
+                React.createElement("div", { style: { fontSize: 22, fontWeight: 700, color: C.green } }, fmt(stats.totalVentas))
+              )
+            ),
+
+            stats.porMetodo && Object.keys(stats.porMetodo).length > 0 && React.createElement("div", { style: { ...S.card, marginBottom: 12 } },
+              React.createElement("div", { style: S.secTitle }, "Por medio de pago"),
+              Object.entries(stats.porMetodo).map(([metodo, monto]) =>
+                React.createElement("div", { key: metodo, style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 } },
+                  React.createElement("span", {
+                    style: {
+                      fontSize: 13, fontWeight: 600, padding: "3px 10px", borderRadius: 8,
+                      background: metodo === "MercadoPago" ? C.blueLight : metodo === "Efectivo" ? C.greenLight : C.grayLight,
+                      color: metodo === "MercadoPago" ? C.blue : metodo === "Efectivo" ? C.green : C.gray
+                    }
+                  }, metodo),
+                  React.createElement("span", { style: { fontSize: 13, fontWeight: 700, color: C.text } }, fmt(monto))
+                )
+              )
+            ),
+
+            stats.topByQty && stats.topByQty.length > 0 && React.createElement("div", { style: { ...S.card, marginBottom: 12 } },
+              React.createElement("div", { style: S.secTitle }, "Productos más vendidos"),
+              stats.topByQty.map((p, i) =>
+                React.createElement("div", { key: p.name, style: { marginBottom: 8 } },
+                  React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 3 } },
+                    React.createElement("span", { style: { fontSize: 13, color: C.text, fontWeight: i < 3 ? 600 : 400 } },
+                      (i === 0 ? "🥇 " : i === 1 ? "🥈 " : i === 2 ? "🥉 " : "  " + (i + 1) + ". ") + p.name
+                    ),
+                    React.createElement("span", { style: { fontSize: 12, color: C.textMuted } }, p.qty + " uds · " + fmt(p.monto))
+                  ),
+                  React.createElement("div", { style: { height: 4, background: C.grayLight, borderRadius: 4, overflow: "hidden" } },
+                    React.createElement("div", {
+                      style: {
+                        height: "100%", borderRadius: 4,
+                        width: Math.round((p.qty / stats.topByQty[0].qty) * 100) + "%",
+                        background: i === 0 ? C.blue : i === 1 ? C.green : i === 2 ? C.amber : C.border
+                      }
+                    })
+                  )
+                )
+              )
+            ),
+
+            stats.topCombos && stats.topCombos.length > 0 && React.createElement("div", { style: { ...S.card, marginBottom: 12 } },
+              React.createElement("div", { style: S.secTitle }, "Combinaciones más frecuentes"),
+              stats.topCombos.map((c, i) =>
+                React.createElement("div", { key: c.combo, style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 } },
+                  React.createElement("span", { style: { fontSize: 12, color: C.text, flex: 1, marginRight: 8 } }, c.combo),
+                  React.createElement("span", { style: { fontSize: 12, fontWeight: 600, padding: "2px 8px", borderRadius: 8, background: C.amberLight, color: C.amber, whiteSpace: "nowrap" } }, c.count + " veces")
+                )
+              )
+            ),
+
+            React.createElement("div", { style: { textAlign: "center", marginTop: 8 } },
+              React.createElement("div", { style: { fontSize: 11, color: C.textMuted } }, "La pestaña Stats en tu Google Sheet se actualiza automáticamente")
+            )
+          )
+        ),
+
 
         // ── CAJAS LOGIN ──
         view === "cajas" && !cajasUnlocked && React.createElement("div", { style: { textAlign: "center", padding: "48px 0" } },
@@ -1110,7 +1224,6 @@ No agregues ningún texto fuera del JSON.`
             React.createElement("div", { style: { display: "flex", gap: 6 } },
               kioskTab === "buscar" && React.createElement("button", { style: { ...S.ghostBtn, fontSize: 12 }, onClick: syncOrders, disabled: loading }, loading ? "…" : "↻ Sync"),
               React.createElement("button", { style: S.navBtn(kioskTab === "buscar"), onClick: () => setKioskTab("buscar") }, "Entregas"),
-              React.createElement("button", { style: S.navBtn(kioskTab === "stats"), onClick: () => { setKioskTab("stats"); if (!stats) loadStats(); } }, "📊"),
               React.createElement("button", { style: S.navBtn(kioskTab === "config"), onClick: () => setKioskTab("config") }, "⚙"),
               React.createElement("button", { style: { ...S.ghostBtn, fontSize: 12 }, onClick: () => { setUnlocked(false); setPin(""); setKioskTab("buscar"); } }, "Salir")
             )
@@ -1145,105 +1258,6 @@ No agregues ningún texto fuera del JSON.`
             ))
           ),
 
-
-          kioskTab === "stats" && React.createElement("div", null,
-
-            // Header
-            React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 } },
-              React.createElement("div", { style: { fontSize: 15, fontWeight: 700, color: C.text } }, "Estadísticas de ventas"),
-              React.createElement("button", {
-                style: { ...S.ghostBtn, fontSize: 12 },
-                onClick: loadStats, disabled: statsLoading
-              }, statsLoading ? "Calculando…" : "↻ Actualizar")
-            ),
-
-            // Loading
-            statsLoading && React.createElement("div", { style: { textAlign: "center", padding: "40px 0", color: C.textMuted, fontSize: 14 } }, "Calculando estadísticas…"),
-
-            // Sin datos
-            !statsLoading && !stats && React.createElement("div", { style: { textAlign: "center", padding: "40px 0", color: C.textMuted, fontSize: 14 } },
-              "Tocá Actualizar para cargar las estadísticas"
-            ),
-
-            // Dashboard
-            !statsLoading && stats && React.createElement("div", null,
-
-              // ── Resumen general ──
-              React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 16 } },
-                React.createElement("div", { style: { background: C.blueLight, border: `1px solid ${C.blueBorder}`, borderRadius: 12, padding: "12px 14px", textAlign: "center" } },
-                  React.createElement("div", { style: { fontSize: 11, color: C.blue, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 } }, "Pedidos"),
-                  React.createElement("div", { style: { fontSize: 32, fontWeight: 700, color: C.blue } }, stats.totalPedidos)
-                ),
-                React.createElement("div", { style: { background: C.greenLight, border: `1px solid ${C.greenBorder}`, borderRadius: 12, padding: "12px 14px", textAlign: "center" } },
-                  React.createElement("div", { style: { fontSize: 11, color: C.green, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 } }, "Recaudado"),
-                  React.createElement("div", { style: { fontSize: 22, fontWeight: 700, color: C.green } }, fmt(stats.totalVentas))
-                )
-              ),
-
-              // ── Por medio de pago ──
-              stats.porMetodo && Object.keys(stats.porMetodo).length > 0 && React.createElement("div", { style: { ...S.card, marginBottom: 12 } },
-                React.createElement("div", { style: S.secTitle }, "Por medio de pago"),
-                Object.entries(stats.porMetodo).map(([metodo, monto]) =>
-                  React.createElement("div", { key: metodo, style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 } },
-                    React.createElement("span", {
-                      style: {
-                        fontSize: 13, fontWeight: 600, padding: "3px 10px", borderRadius: 8,
-                        background: metodo === "MercadoPago" ? C.blueLight : metodo === "Efectivo" ? C.greenLight : C.grayLight,
-                        color: metodo === "MercadoPago" ? C.blue : metodo === "Efectivo" ? C.green : C.gray
-                      }
-                    }, metodo),
-                    React.createElement("span", { style: { fontSize: 13, fontWeight: 700, color: C.text } }, fmt(monto))
-                  )
-                )
-              ),
-
-              // ── Top productos ──
-              stats.topByQty && stats.topByQty.length > 0 && React.createElement("div", { style: { ...S.card, marginBottom: 12 } },
-                React.createElement("div", { style: S.secTitle }, "Productos más vendidos"),
-                stats.topByQty.map((p, i) =>
-                  React.createElement("div", { key: p.name, style: { marginBottom: 8 } },
-                    React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 3 } },
-                      React.createElement("span", { style: { fontSize: 13, color: C.text, fontWeight: i < 3 ? 600 : 400 } },
-                        (i === 0 ? "🥇 " : i === 1 ? "🥈 " : i === 2 ? "🥉 " : "" + (i + 1) + ". ") + p.name
-                      ),
-                      React.createElement("span", { style: { fontSize: 12, color: C.textMuted } }, p.qty + " uds · " + fmt(p.monto))
-                    ),
-                    // Barra de progreso
-                    React.createElement("div", { style: { height: 4, background: C.grayLight, borderRadius: 4, overflow: "hidden" } },
-                      React.createElement("div", {
-                        style: {
-                          height: "100%", borderRadius: 4,
-                          width: Math.round((p.qty / stats.topByQty[0].qty) * 100) + "%",
-                          background: i === 0 ? C.blue : i === 1 ? C.green : i === 2 ? C.amber : C.border
-                        }
-                      })
-                    )
-                  )
-                )
-              ),
-
-              // ── Combinaciones frecuentes ──
-              stats.topCombos && stats.topCombos.length > 0 && React.createElement("div", { style: { ...S.card, marginBottom: 12 } },
-                React.createElement("div", { style: S.secTitle }, "Combinaciones más frecuentes"),
-                stats.topCombos.map((c, i) =>
-                  React.createElement("div", { key: c.combo, style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 } },
-                    React.createElement("span", { style: { fontSize: 12, color: C.text, flex: 1, marginRight: 8 } }, c.combo),
-                    React.createElement("span", {
-                      style: {
-                        fontSize: 12, fontWeight: 600, padding: "2px 8px", borderRadius: 8,
-                        background: C.amberLight, color: C.amber, whiteSpace: "nowrap"
-                      }
-                    }, c.count + " veces")
-                  )
-                )
-              ),
-
-              // ── Link a Sheet Stats ──
-              React.createElement("div", { style: { textAlign: "center", marginTop: 8 } },
-                React.createElement("div", { style: { fontSize: 11, color: C.textMuted } }, "La pestaña Stats en tu Google Sheet se actualiza automáticamente")
-              )
-            )
-          ),
 
           kioskTab === "config" && React.createElement("div", null,
             React.createElement("div", { style: { fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 16 } }, "Configuración del backend"),

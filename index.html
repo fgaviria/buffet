@@ -58,7 +58,7 @@
     // ═══════════════════════════════════════════════════════════════
     //  ⚙️  CONFIGURACIÓN — editá estas líneas antes de deployar
     // ═══════════════════════════════════════════════════════════════
-    const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzyMiK7LPVUAOwRaOQmF-i7bEnIt2wp77rNUfY3_-DIhqgqZvlppzxYsXU6bsE6AfU/exec";
+    const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwqwD89B6LOKwIBudMdeAjNJazqeKaqi9niToWiCP1x9DgSbU8BqvTqyiJ3MBshwhZA/exec";
     const KIOSK_PIN = "1928";   // PIN para acceder al panel de entregas
     // Estos valores son defaults — se sobreescriben con los de la pestaña Config de Sheets
     const DEFAULTS = {
@@ -219,6 +219,8 @@
       const backendOk = meta.backendOk || false;
       const [backendVerified, setBackendVerified] = useState(null); // null=no chequeado, true/false
       const [resetConfirm, setResetConfirm] = useState(false);
+      const [stats, setStats] = useState(null);
+      const [statsLoading, setStatsLoading] = useState(false);
       const [resetting, setResetting] = useState(false);
       // Cajas
       const [cajasUnlocked, setCajasUnlocked] = useState(false);
@@ -463,6 +465,99 @@ No agregues ningún texto fuera del JSON.`
           toast_("Sin conexión — pedido guardado localmente", "warn");
         }
         setLoading(false);
+      }
+
+      // Cargar estadísticas
+      // Calcula estadísticas localmente desde los pedidos en memoria
+      // No depende del backend — funciona siempre
+      function calcStats(orderList) {
+        if (!orderList || !orderList.length) return null;
+
+        const productCount = {};
+        const comboPairs = {};
+        let totalVentas = 0;
+        const porMetodo = {};
+
+        orderList.forEach(order => {
+          const total = Number(order.total) || 0;
+          const metodo = order.metodoPago || "MercadoPago";
+          const items = order.items || [];
+
+          totalVentas += total;
+          porMetodo[metodo] = (porMetodo[metodo] || 0) + total;
+
+          const names = [];
+          items.forEach(({ qty, name, price }) => {
+            if (!name) return;
+            if (!productCount[name]) productCount[name] = { qty: 0, monto: 0 };
+            productCount[name].qty += qty;
+            productCount[name].monto += (price || 0) * qty;
+            names.push(name);
+          });
+
+          // Pares de productos en el mismo pedido
+          const unique = [...new Set(names)].sort();
+          for (let i = 0; i < unique.length; i++) {
+            for (let j = i + 1; j < unique.length; j++) {
+              const key = unique[i] + " + " + unique[j];
+              comboPairs[key] = (comboPairs[key] || 0) + 1;
+            }
+          }
+        });
+
+        const topByQty = Object.entries(productCount)
+          .sort((a, b) => b[1].qty - a[1].qty)
+          .slice(0, 15)
+          .map(([name, d]) => ({ name, qty: d.qty, monto: Math.round(d.monto) }));
+
+        const topCombos = Object.entries(comboPairs)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 10)
+          .map(([combo, count]) => ({ combo, count }));
+
+        return { totalPedidos: orderList.length, totalVentas, porMetodo, topByQty, topCombos };
+      }
+
+      async function loadStats() {
+        setStatsLoading(true);
+        // Primero intenta desde el backend (incluye pedidos de todos los dispositivos)
+        try {
+          const res = await apiGet({ action: "getStats" });
+          if (res.ok && res.totalPedidos !== undefined) {
+            setStats(res);
+            setStatsLoading(false);
+            return;
+          }
+        } catch (e) { }
+
+        // Fallback: calcula desde los pedidos sincronizados localmente
+        // (hace sync primero para tener los datos más frescos)
+        try {
+          const data = await apiGet({ action: "getOrders" });
+          if (data.ok && data.orders && data.orders.length) {
+            // Reconstruye items desde itemsStr para orders que vienen de Sheets
+            const enriched = data.orders.map(r => ({
+              ...r,
+              total: Number(r.total) || 0,
+              metodoPago: r.metodoPago || (r.itemsStr ? "MercadoPago" : ""),
+              items: r.items || (r.itemsStr ? r.itemsStr.split(", ").map(s => {
+                const idx = s.indexOf("x ");
+                return idx < 0 ? null : { qty: +s.slice(0, idx) || 1, name: s.slice(idx + 2).trim(), price: 0 };
+              }).filter(Boolean) : [])
+            }));
+            setStats(calcStats(enriched));
+          } else {
+            // Último recurso: usa solo los pedidos del localStorage local
+            const local = calcStats(orders);
+            if (local) setStats(local);
+            else toast_("No hay pedidos para analizar", "warn");
+          }
+        } catch (e) {
+          const local = calcStats(orders);
+          if (local) setStats(local);
+          else toast_("Error al cargar estadísticas", "err");
+        }
+        setStatsLoading(false);
       }
 
       // Reset completo para producción
@@ -1015,6 +1110,7 @@ No agregues ningún texto fuera del JSON.`
             React.createElement("div", { style: { display: "flex", gap: 6 } },
               kioskTab === "buscar" && React.createElement("button", { style: { ...S.ghostBtn, fontSize: 12 }, onClick: syncOrders, disabled: loading }, loading ? "…" : "↻ Sync"),
               React.createElement("button", { style: S.navBtn(kioskTab === "buscar"), onClick: () => setKioskTab("buscar") }, "Entregas"),
+              React.createElement("button", { style: S.navBtn(kioskTab === "stats"), onClick: () => { setKioskTab("stats"); if (!stats) loadStats(); } }, "📊"),
               React.createElement("button", { style: S.navBtn(kioskTab === "config"), onClick: () => setKioskTab("config") }, "⚙"),
               React.createElement("button", { style: { ...S.ghostBtn, fontSize: 12 }, onClick: () => { setUnlocked(false); setPin(""); setKioskTab("buscar"); } }, "Salir")
             )
@@ -1047,6 +1143,106 @@ No agregues ningún texto fuera del JSON.`
             [...orders].reverse().map(o => React.createElement("div", { key: o.number, style: { ...S.card, opacity: o.delivered ? 0.6 : 1 } },
               React.createElement(OCard, { o, big: false })
             ))
+          ),
+
+
+          kioskTab === "stats" && React.createElement("div", null,
+
+            // Header
+            React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 } },
+              React.createElement("div", { style: { fontSize: 15, fontWeight: 700, color: C.text } }, "Estadísticas de ventas"),
+              React.createElement("button", {
+                style: { ...S.ghostBtn, fontSize: 12 },
+                onClick: loadStats, disabled: statsLoading
+              }, statsLoading ? "Calculando…" : "↻ Actualizar")
+            ),
+
+            // Loading
+            statsLoading && React.createElement("div", { style: { textAlign: "center", padding: "40px 0", color: C.textMuted, fontSize: 14 } }, "Calculando estadísticas…"),
+
+            // Sin datos
+            !statsLoading && !stats && React.createElement("div", { style: { textAlign: "center", padding: "40px 0", color: C.textMuted, fontSize: 14 } },
+              "Tocá Actualizar para cargar las estadísticas"
+            ),
+
+            // Dashboard
+            !statsLoading && stats && React.createElement("div", null,
+
+              // ── Resumen general ──
+              React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 16 } },
+                React.createElement("div", { style: { background: C.blueLight, border: `1px solid ${C.blueBorder}`, borderRadius: 12, padding: "12px 14px", textAlign: "center" } },
+                  React.createElement("div", { style: { fontSize: 11, color: C.blue, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 } }, "Pedidos"),
+                  React.createElement("div", { style: { fontSize: 32, fontWeight: 700, color: C.blue } }, stats.totalPedidos)
+                ),
+                React.createElement("div", { style: { background: C.greenLight, border: `1px solid ${C.greenBorder}`, borderRadius: 12, padding: "12px 14px", textAlign: "center" } },
+                  React.createElement("div", { style: { fontSize: 11, color: C.green, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 } }, "Recaudado"),
+                  React.createElement("div", { style: { fontSize: 22, fontWeight: 700, color: C.green } }, fmt(stats.totalVentas))
+                )
+              ),
+
+              // ── Por medio de pago ──
+              stats.porMetodo && Object.keys(stats.porMetodo).length > 0 && React.createElement("div", { style: { ...S.card, marginBottom: 12 } },
+                React.createElement("div", { style: S.secTitle }, "Por medio de pago"),
+                Object.entries(stats.porMetodo).map(([metodo, monto]) =>
+                  React.createElement("div", { key: metodo, style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 } },
+                    React.createElement("span", {
+                      style: {
+                        fontSize: 13, fontWeight: 600, padding: "3px 10px", borderRadius: 8,
+                        background: metodo === "MercadoPago" ? C.blueLight : metodo === "Efectivo" ? C.greenLight : C.grayLight,
+                        color: metodo === "MercadoPago" ? C.blue : metodo === "Efectivo" ? C.green : C.gray
+                      }
+                    }, metodo),
+                    React.createElement("span", { style: { fontSize: 13, fontWeight: 700, color: C.text } }, fmt(monto))
+                  )
+                )
+              ),
+
+              // ── Top productos ──
+              stats.topByQty && stats.topByQty.length > 0 && React.createElement("div", { style: { ...S.card, marginBottom: 12 } },
+                React.createElement("div", { style: S.secTitle }, "Productos más vendidos"),
+                stats.topByQty.map((p, i) =>
+                  React.createElement("div", { key: p.name, style: { marginBottom: 8 } },
+                    React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 3 } },
+                      React.createElement("span", { style: { fontSize: 13, color: C.text, fontWeight: i < 3 ? 600 : 400 } },
+                        (i === 0 ? "🥇 " : i === 1 ? "🥈 " : i === 2 ? "🥉 " : "" + (i + 1) + ". ") + p.name
+                      ),
+                      React.createElement("span", { style: { fontSize: 12, color: C.textMuted } }, p.qty + " uds · " + fmt(p.monto))
+                    ),
+                    // Barra de progreso
+                    React.createElement("div", { style: { height: 4, background: C.grayLight, borderRadius: 4, overflow: "hidden" } },
+                      React.createElement("div", {
+                        style: {
+                          height: "100%", borderRadius: 4,
+                          width: Math.round((p.qty / stats.topByQty[0].qty) * 100) + "%",
+                          background: i === 0 ? C.blue : i === 1 ? C.green : i === 2 ? C.amber : C.border
+                        }
+                      })
+                    )
+                  )
+                )
+              ),
+
+              // ── Combinaciones frecuentes ──
+              stats.topCombos && stats.topCombos.length > 0 && React.createElement("div", { style: { ...S.card, marginBottom: 12 } },
+                React.createElement("div", { style: S.secTitle }, "Combinaciones más frecuentes"),
+                stats.topCombos.map((c, i) =>
+                  React.createElement("div", { key: c.combo, style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 } },
+                    React.createElement("span", { style: { fontSize: 12, color: C.text, flex: 1, marginRight: 8 } }, c.combo),
+                    React.createElement("span", {
+                      style: {
+                        fontSize: 12, fontWeight: 600, padding: "2px 8px", borderRadius: 8,
+                        background: C.amberLight, color: C.amber, whiteSpace: "nowrap"
+                      }
+                    }, c.count + " veces")
+                  )
+                )
+              ),
+
+              // ── Link a Sheet Stats ──
+              React.createElement("div", { style: { textAlign: "center", marginTop: 8 } },
+                React.createElement("div", { style: { fontSize: 11, color: C.textMuted } }, "La pestaña Stats en tu Google Sheet se actualiza automáticamente")
+              )
+            )
           ),
 
           kioskTab === "config" && React.createElement("div", null,

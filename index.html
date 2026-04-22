@@ -496,7 +496,11 @@ No agregues ningún texto fuera del JSON.`
         orderList.forEach(order => {
           const total = Number(order.total) || 0;
           const metodo = order.metodoPago || order.metodo || "MercadoPago";
-          const canal = order.canal || (metodo === "Efectivo" ? "Caja" : "Online");
+          // Canal: campo explícito > inferencia por fileUrl > inferencia por método
+          const canal = order.canal ||
+            (metodo === "Efectivo" ? "Caja" :
+              order.fileUrl ? "Online" :
+                order.fileName ? "Online" : "Online");
           const horaStr = order.hora || (order.at ? String(order.at).slice(11, 13) : "");
           const items = order.items || [];
 
@@ -565,15 +569,27 @@ No agregues ningún texto fuera del JSON.`
           const data = await apiGet({ action: "getOrders" });
           if (data.ok && data.orders && data.orders.length) {
             // Reconstruye items desde itemsStr para orders que vienen de Sheets
-            const enriched = data.orders.map(r => ({
-              ...r,
-              total: Number(r.total) || 0,
-              metodoPago: r.metodoPago || (r.itemsStr ? "MercadoPago" : ""),
-              items: r.items || (r.itemsStr ? r.itemsStr.split(", ").map(s => {
-                const idx = s.indexOf("x ");
-                return idx < 0 ? null : { qty: +s.slice(0, idx) || 1, name: s.slice(idx + 2).trim(), price: 0 };
-              }).filter(Boolean) : [])
-            }));
+            const enriched = data.orders.map(r => {
+              // Canal: usar el valor de Sheets si existe, sino inferir
+              // Online = tiene comprobante o fileUrl; Caja = sin comprobante
+              const metodo = r.metodo || r.metodoPago || "MercadoPago";
+              const canal = r.canal ||
+                (metodo === "Efectivo" ? "Caja" :
+                  r.fileUrl ? "Online" :
+                    metodo === "MercadoPago" && !r.fileUrl ? "Caja" : "Online");
+              return {
+                ...r,
+                total: Number(r.total) || 0,
+                metodoPago: metodo,
+                canal: canal,
+                delivered: r.delivered || false,
+                hora: r.hora || (r.at ? String(r.at).slice(11, 13) : ""),
+                items: r.items || (r.itemsStr ? r.itemsStr.split(", ").map(s => {
+                  const idx = s.indexOf("x ");
+                  return idx < 0 ? null : { qty: +s.slice(0, idx) || 1, name: s.slice(idx + 2).trim(), price: 0 };
+                }).filter(Boolean) : [])
+              };
+            });
             setStats(calcStats(enriched, buildPriceMap()));
           } else {
             // Último recurso: usa solo los pedidos del localStorage local

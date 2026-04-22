@@ -1052,30 +1052,7 @@ No agregues ningún texto fuera del JSON.`
               )
             ),
 
-            // Franja horaria
-            stats.porHora && Object.keys(stats.porHora).length > 0 && React.createElement("div", { style: { ...S.card, marginBottom: 12 } },
-              React.createElement("div", { style: S.secTitle }, "Pedidos por franja horaria"),
-              React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 5 } },
-                Object.entries(stats.porHora)
-                  .sort((a, b) => a[0].localeCompare(b[0]))
-                  .map(([hora, count]) => {
-                    const max = Math.max(...Object.values(stats.porHora));
-                    return React.createElement("div", { key: hora, style: { display: "flex", alignItems: "center", gap: 8 } },
-                      React.createElement("span", { style: { fontSize: 12, color: C.textMuted, minWidth: 42 } }, hora + ":00"),
-                      React.createElement("div", { style: { flex: 1, height: 16, background: C.grayLight, borderRadius: 4, overflow: "hidden" } },
-                        React.createElement("div", {
-                          style: {
-                            height: "100%", borderRadius: 4, background: C.blue,
-                            width: Math.round((count / max) * 100) + "%",
-                            display: "flex", alignItems: "center", paddingLeft: 4
-                          }
-                        })
-                      ),
-                      React.createElement("span", { style: { fontSize: 12, fontWeight: 600, color: C.text, minWidth: 20 } }, count)
-                    );
-                  })
-              )
-            ),
+
 
             stats.topByQty && stats.topByQty.length > 0 && React.createElement("div", { style: { ...S.card, marginBottom: 12 } },
               React.createElement("div", { style: S.secTitle }, "Productos más vendidos"),

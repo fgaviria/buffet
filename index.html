@@ -58,7 +58,7 @@
     // ═══════════════════════════════════════════════════════════════
     //  ⚙️  CONFIGURACIÓN — editá estas líneas antes de deployar
     // ═══════════════════════════════════════════════════════════════
-    const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwqwD89B6LOKwIBudMdeAjNJazqeKaqi9niToWiCP1x9DgSbU8BqvTqyiJ3MBshwhZA/exec";
+    const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwK95rnEEaf4SINVgyaxDpnil2sl_rRZtf8RyHMKmRlHP2gmIesjVZyjGwoVVn5tvFU/exec";
     const KIOSK_PIN = "1928";   // PIN para acceder al panel de entregas
     // Estos valores son defaults — se sobreescriben con los de la pestaña Config de Sheets
     const DEFAULTS = {
@@ -474,7 +474,9 @@ No agregues ningún texto fuera del JSON.`
       // Cargar estadísticas
       // Calcula estadísticas localmente desde los pedidos en memoria
       // No depende del backend — funciona siempre
-      function calcStats(orderList) {
+      function calcStats(orderList, priceMap) {
+        // priceMap: { "Nombre producto": precioUnitario }
+        // construido desde menu + cajasMenu para tener precios exactos
         if (!orderList || !orderList.length) return null;
 
         const productCount = {};
@@ -493,13 +495,14 @@ No agregues ningún texto fuera del JSON.`
           const names = [];
           items.forEach(({ qty, name, price }) => {
             if (!name) return;
+            // Usa precio del priceMap si el item no trae precio (pedidos reconstruidos desde Sheets)
+            const unitPrice = (price && price > 0) ? price : (priceMap && priceMap[name]) || 0;
             if (!productCount[name]) productCount[name] = { qty: 0, monto: 0 };
             productCount[name].qty += qty;
-            productCount[name].monto += (price || 0) * qty;
+            productCount[name].monto += unitPrice * qty;
             names.push(name);
           });
 
-          // Pares de productos en el mismo pedido
           const unique = [...new Set(names)].sort();
           for (let i = 0; i < unique.length; i++) {
             for (let j = i + 1; j < unique.length; j++) {
@@ -520,6 +523,15 @@ No agregues ningún texto fuera del JSON.`
           .map(([combo, count]) => ({ combo, count }));
 
         return { totalPedidos: orderList.length, totalVentas, porMetodo, topByQty, topCombos };
+      }
+
+      // Construye mapa { nombre: precio } desde todos los menús disponibles
+      function buildPriceMap() {
+        const map = {};
+        [...menu, ...cajasMenu].forEach(item => {
+          if (item.name && item.price) map[item.name] = item.price;
+        });
+        return map;
       }
 
       async function loadStats() {
@@ -549,15 +561,15 @@ No agregues ningún texto fuera del JSON.`
                 return idx < 0 ? null : { qty: +s.slice(0, idx) || 1, name: s.slice(idx + 2).trim(), price: 0 };
               }).filter(Boolean) : [])
             }));
-            setStats(calcStats(enriched));
+            setStats(calcStats(enriched, buildPriceMap()));
           } else {
             // Último recurso: usa solo los pedidos del localStorage local
-            const local = calcStats(orders);
+            const local = calcStats(orders, buildPriceMap());
             if (local) setStats(local);
             else toast_("No hay pedidos para analizar", "warn");
           }
         } catch (e) {
-          const local = calcStats(orders);
+          const local = calcStats(orders, buildPriceMap());
           if (local) setStats(local);
           else toast_("Error al cargar estadísticas", "err");
         }
@@ -990,7 +1002,7 @@ No agregues ningún texto fuera del JSON.`
                     React.createElement("span", { style: { fontSize: 13, color: C.text, fontWeight: i < 3 ? 600 : 400 } },
                       (i === 0 ? "🥇 " : i === 1 ? "🥈 " : i === 2 ? "🥉 " : "  " + (i + 1) + ". ") + p.name
                     ),
-                    React.createElement("span", { style: { fontSize: 12, color: C.textMuted } }, p.qty + " uds · " + fmt(p.monto))
+                    React.createElement("span", { style: { fontSize: 12, color: C.textMuted } }, p.qty + " uds · " + fmt(p.monto) + " total")
                   ),
                   React.createElement("div", { style: { height: 4, background: C.grayLight, borderRadius: 4, overflow: "hidden" } },
                     React.createElement("div", {

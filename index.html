@@ -9,7 +9,7 @@
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
   <title>Buffet Family</title>
-  <meta name="version" content="20260422-1335">
+  <meta name="version" content="20260422-1657">
   <style>
     *,
     *::before,
@@ -62,7 +62,7 @@
     // ═══════════════════════════════════════════════════════════════
     //  ⚙️  CONFIGURACIÓN — editá estas líneas antes de deployar
     // ═══════════════════════════════════════════════════════════════
-    const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwK95rnEEaf4SINVgyaxDpnil2sl_rRZtf8RyHMKmRlHP2gmIesjVZyjGwoVVn5tvFU/exec";
+    const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyZqrf7mhou8-61b9A15yNQaK8-tdbFPsPp7asI2k7mNZwjty3_MZ074bD00Ciwklk/exec";
     const KIOSK_PIN = "1928";   // PIN para acceder al panel de entregas
     // Estos valores son defaults — se sobreescriben con los de la pestaña Config de Sheets
     const DEFAULTS = {
@@ -488,18 +488,27 @@ No agregues ningún texto fuera del JSON.`
         let totalVentas = 0;
         const porMetodo = {};
 
+        let pendientes = 0;
+        let entregados = 0;
+        const porCanal = {};
+        const porHora = {};
+
         orderList.forEach(order => {
           const total = Number(order.total) || 0;
-          const metodo = order.metodoPago || "MercadoPago";
+          const metodo = order.metodoPago || order.metodo || "MercadoPago";
+          const canal = order.canal || (metodo === "Efectivo" ? "Caja" : "Online");
+          const horaStr = order.hora || (order.at ? String(order.at).slice(11, 13) : "");
           const items = order.items || [];
 
           totalVentas += total;
           porMetodo[metodo] = (porMetodo[metodo] || 0) + total;
+          porCanal[canal] = (porCanal[canal] || 0) + 1;
+          if (horaStr) porHora[horaStr] = (porHora[horaStr] || 0) + 1;
+          if (order.delivered) entregados++; else pendientes++;
 
           const names = [];
           items.forEach(({ qty, name, price }) => {
             if (!name) return;
-            // Usa precio del priceMap si el item no trae precio (pedidos reconstruidos desde Sheets)
             const unitPrice = (price && price > 0) ? price : (priceMap && priceMap[name]) || 0;
             if (!productCount[name]) productCount[name] = { qty: 0, monto: 0 };
             productCount[name].qty += qty;
@@ -526,7 +535,7 @@ No agregues ningún texto fuera del JSON.`
           .slice(0, 10)
           .map(([combo, count]) => ({ combo, count }));
 
-        return { totalPedidos: orderList.length, totalVentas, porMetodo, topByQty, topCombos };
+        return { totalPedidos: orderList.length, totalVentas, pendientes, entregados, porMetodo, porCanal, porHora, topByQty, topCombos };
       }
 
       // Construye mapa { nombre: precio } desde todos los menús disponibles
@@ -971,14 +980,26 @@ No agregues ningún texto fuera del JSON.`
 
           !statsLoading && stats && React.createElement("div", null,
 
-            React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 16 } },
+            // Fila 1: total pedidos + recaudado
+            React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 } },
               React.createElement("div", { style: { background: C.blueLight, border: `1px solid ${C.blueBorder}`, borderRadius: 12, padding: "12px 14px", textAlign: "center" } },
-                React.createElement("div", { style: { fontSize: 11, color: C.blue, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 } }, "Pedidos"),
+                React.createElement("div", { style: { fontSize: 11, color: C.blue, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 } }, "Total pedidos"),
                 React.createElement("div", { style: { fontSize: 32, fontWeight: 700, color: C.blue } }, stats.totalPedidos)
               ),
               React.createElement("div", { style: { background: C.greenLight, border: `1px solid ${C.greenBorder}`, borderRadius: 12, padding: "12px 14px", textAlign: "center" } },
                 React.createElement("div", { style: { fontSize: 11, color: C.green, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 } }, "Recaudado"),
                 React.createElement("div", { style: { fontSize: 22, fontWeight: 700, color: C.green } }, fmt(stats.totalVentas))
+              )
+            ),
+            // Fila 2: entregados + pendientes
+            React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 16 } },
+              React.createElement("div", { style: { background: C.greenLight, border: `1px solid ${C.greenBorder}`, borderRadius: 12, padding: "12px 14px", textAlign: "center" } },
+                React.createElement("div", { style: { fontSize: 11, color: C.green, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 } }, "✅ Entregados"),
+                React.createElement("div", { style: { fontSize: 32, fontWeight: 700, color: C.green } }, stats.entregados || 0)
+              ),
+              React.createElement("div", { style: { background: C.amberLight, border: `1px solid ${C.amberBorder}`, borderRadius: 12, padding: "12px 14px", textAlign: "center" } },
+                React.createElement("div", { style: { fontSize: 11, color: C.amber, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 } }, "⏳ Pendientes"),
+                React.createElement("div", { style: { fontSize: 32, fontWeight: 700, color: C.amber } }, stats.pendientes || 0)
               )
             ),
 
@@ -995,6 +1016,48 @@ No agregues ningún texto fuera del JSON.`
                   }, metodo),
                   React.createElement("span", { style: { fontSize: 13, fontWeight: 700, color: C.text } }, fmt(monto))
                 )
+              )
+            ),
+
+            // Canal
+            stats.porCanal && Object.keys(stats.porCanal).length > 0 && React.createElement("div", { style: { ...S.card, marginBottom: 12 } },
+              React.createElement("div", { style: S.secTitle }, "Por canal"),
+              Object.entries(stats.porCanal).map(([canal, count]) =>
+                React.createElement("div", { key: canal, style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 } },
+                  React.createElement("span", {
+                    style: {
+                      fontSize: 13, fontWeight: 600, padding: "3px 10px", borderRadius: 8,
+                      background: canal === "Online" ? C.blueLight : C.amberLight,
+                      color: canal === "Online" ? C.blue : C.amber
+                    }
+                  }, canal === "Online" ? "🌐 Online" : "🏪 Caja"),
+                  React.createElement("span", { style: { fontSize: 13, fontWeight: 700, color: C.text } }, count + " pedidos")
+                )
+              )
+            ),
+
+            // Franja horaria
+            stats.porHora && Object.keys(stats.porHora).length > 0 && React.createElement("div", { style: { ...S.card, marginBottom: 12 } },
+              React.createElement("div", { style: S.secTitle }, "Pedidos por franja horaria"),
+              React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 5 } },
+                Object.entries(stats.porHora)
+                  .sort((a, b) => a[0].localeCompare(b[0]))
+                  .map(([hora, count]) => {
+                    const max = Math.max(...Object.values(stats.porHora));
+                    return React.createElement("div", { key: hora, style: { display: "flex", alignItems: "center", gap: 8 } },
+                      React.createElement("span", { style: { fontSize: 12, color: C.textMuted, minWidth: 42 } }, hora + ":00"),
+                      React.createElement("div", { style: { flex: 1, height: 16, background: C.grayLight, borderRadius: 4, overflow: "hidden" } },
+                        React.createElement("div", {
+                          style: {
+                            height: "100%", borderRadius: 4, background: C.blue,
+                            width: Math.round((count / max) * 100) + "%",
+                            display: "flex", alignItems: "center", paddingLeft: 4
+                          }
+                        })
+                      ),
+                      React.createElement("span", { style: { fontSize: 12, fontWeight: 600, color: C.text, minWidth: 20 } }, count)
+                    );
+                  })
               )
             ),
 

@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 
 // ── CONFIGURACIÓN ─────────────────────────────────────────────
 // Pegá acá la URL de tu Google Apps Script Web App
-const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyZqrf7mhou8-61b9A15yNQaK8-tdbFPsPp7asI2k7mNZwjty3_MZ074bD00Ciwklk/exec";
+const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwkKri1c51LrEKpH77BIVmn0CkUjaKbyZZ_KKIkl5BO8aYFY3cU2m-6_5RnMOvEbWib/exec";
 
 const MENU = [
   { id: 1, name: "Sándwich de milanesa",   price: 1200, desc: "Con lechuga y tomate",       emoji: "🥪" },

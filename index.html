@@ -9,7 +9,7 @@
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
   <title>Buffet Family</title>
-  <meta name="version" content="20260422-1657">
+  <meta name="version" content="20260422-1746">
   <style>
     *,
     *::before,
@@ -491,23 +491,19 @@ No agregues ningún texto fuera del JSON.`
         let pendientes = 0;
         let entregados = 0;
         const porCanal = {};
-        const porHora = {};
 
         orderList.forEach(order => {
           const total = Number(order.total) || 0;
           const metodo = order.metodoPago || order.metodo || "MercadoPago";
-          // Canal: campo explícito > inferencia por fileUrl > inferencia por método
           const canal = order.canal ||
             (metodo === "Efectivo" ? "Caja" :
               order.fileUrl ? "Online" :
                 order.fileName ? "Online" : "Online");
-          const horaStr = order.hora || (order.at ? String(order.at).slice(11, 13) : "");
           const items = order.items || [];
 
           totalVentas += total;
           porMetodo[metodo] = (porMetodo[metodo] || 0) + total;
           porCanal[canal] = (porCanal[canal] || 0) + 1;
-          if (horaStr) porHora[horaStr] = (porHora[horaStr] || 0) + 1;
           if (order.delivered) entregados++; else pendientes++;
 
           const names = [];
@@ -539,10 +535,31 @@ No agregues ningún texto fuera del JSON.`
           .slice(0, 10)
           .map(([combo, count]) => ({ combo, count }));
 
-        return { totalPedidos: orderList.length, totalVentas, pendientes, entregados, porMetodo, porCanal, porHora, topByQty, topCombos };
+        return { totalPedidos: orderList.length, totalVentas, pendientes, entregados, porMetodo, porCanal, topByQty, topCombos };
       }
 
       // Construye mapa { nombre: precio } desde todos los menús disponibles
+      async function buildPriceMapAsync() {
+        const map = {};
+        // Primero carga lo que ya está en memoria
+        [...menu, ...cajasMenu].forEach(item => {
+          if (item.name && item.price) map[item.name] = item.price;
+        });
+        // Si cajasMenu está vacío, lo busca del backend para tener precios exactos
+        if (!cajasMenu.length && !APPS_SCRIPT_URL.includes("TU_DEPLOYMENT_ID")) {
+          try {
+            const res = await apiGet({ action: "getMenuCajas" });
+            if (res.ok && res.menu) {
+              res.menu.forEach(item => {
+                if (item.name && item.price) map[item.name] = item.price;
+              });
+              setCajasMenu(res.menu); // guarda para próximas llamadas
+            }
+          } catch (e) { }
+        }
+        return map;
+      }
+
       function buildPriceMap() {
         const map = {};
         [...menu, ...cajasMenu].forEach(item => {
@@ -590,17 +607,19 @@ No agregues ningún texto fuera del JSON.`
                 }).filter(Boolean) : [])
               };
             });
-            const computed = calcStats(enriched, buildPriceMap());
+            const pm = await buildPriceMapAsync();
+            const computed = calcStats(enriched, pm);
             setStats(computed);
             if (computed) pushStatsToSheet(computed);
           } else {
-            // Último recurso: usa solo los pedidos del localStorage local
-            const local = calcStats(orders, buildPriceMap());
+            const pm = await buildPriceMapAsync();
+            const local = calcStats(orders, pm);
             if (local) { setStats(local); pushStatsToSheet(local); }
             else toast_("No hay pedidos para analizar", "warn");
           }
         } catch (e) {
-          const local = calcStats(orders, buildPriceMap());
+          const pm = buildPriceMap();
+          const local = calcStats(orders, pm);
           if (local) { setStats(local); pushStatsToSheet(local); }
           else toast_("Error al cargar estadísticas", "err");
         }
@@ -621,7 +640,6 @@ No agregues ningún texto fuera del JSON.`
             topCombos: JSON.stringify(s.topCombos || []),
             porMetodo: JSON.stringify(s.porMetodo || {}),
             porCanal: JSON.stringify(s.porCanal || {}),
-            porHora: JSON.stringify(s.porHora || {}),
           });
         } catch (e) { /* silencioso — no bloquea la UI */ }
       }

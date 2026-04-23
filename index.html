@@ -9,7 +9,7 @@
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
   <title>Buffet Family</title>
-  <meta name="version" content="20260422-1746">
+  <meta name="version" content="20260423-1758">
   <style>
     *,
     *::before,
@@ -62,7 +62,7 @@
     // ═══════════════════════════════════════════════════════════════
     //  ⚙️  CONFIGURACIÓN — editá estas líneas antes de deployar
     // ═══════════════════════════════════════════════════════════════
-    const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwkKri1c51LrEKpH77BIVmn0CkUjaKbyZZ_KKIkl5BO8aYFY3cU2m-6_5RnMOvEbWib/exec";
+    const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwKjxp7oBWUIYePHKPiUyD_up9Y4fnJo7PtCMDU2FGIw3oMefF8Xie7ffNOihOXRSGa/exec";
     const KIOSK_PIN = "1928";   // PIN para acceder al panel de entregas
     // Estos valores son defaults — se sobreescriben con los de la pestaña Config de Sheets
     const DEFAULTS = {
@@ -70,7 +70,7 @@
       mensajeDescuento: "🎉 15% de descuento en todos los productos — ¡pagá anticipado!",
       eventoNombre: "Buffet Family",
       eventoSubtitulo: "Evento del colegio",
-      aliasPago: "BUFFET.FAMILY",
+      aliasPago: "BuffetFamily2026",
     };
 
     // ── Menú (se carga desde Google Sheets al iniciar) ────────────
@@ -223,6 +223,11 @@
       const backendOk = meta.backendOk || false;
       const [backendVerified, setBackendVerified] = useState(null); // null=no chequeado, true/false
       const [resetConfirm, setResetConfirm] = useState(false);
+      const [configUnlocked, setConfigUnlocked] = useState(false);
+      const [configPin, setConfigPin] = useState("");
+      const [configPinError, setConfigPinError] = useState(false);
+      const [pedidoHabilitado, setPedidoHabilitado] = useState(true);
+      const [togglingPedido, setTogglingPedido] = useState(false);
       const [stats, setStats] = useState(null);
       const [statsLoading, setStatsLoading] = useState(false);
       const [resetting, setResetting] = useState(false);
@@ -244,19 +249,16 @@
       useEffect(() => { saveLocal(LOCAL_KEY, orders); }, [orders]);
       useEffect(() => { saveLocal(LOCAL_META, meta); }, [meta]);
 
-      // Verifica el backend en tiempo real cuando se abre la tab de config
+      // Verifica el backend en tiempo real cuando se abre la vista de config
       useEffect(() => {
-        if (kioskTab === "config" && !APPS_SCRIPT_URL.includes("TU_DEPLOYMENT_ID")) {
+        if (view === "cfg" && configUnlocked && !APPS_SCRIPT_URL.includes("TU_DEPLOYMENT_ID")) {
           setBackendVerified(null);
           apiGet({ action: "ping" })
             .then(res => {
               if (res.ok) {
                 setBackendVerified(true);
                 if (!meta.backendOk) setMeta(m => ({ ...m, backendOk: true }));
-                // Si no tenemos las URLs, las obtenemos con init (no crea duplicados, solo devuelve los IDs existentes)
-                if (!meta.sheetUrl) {
-                  return apiGet({ action: "init" });
-                }
+                if (!meta.sheetUrl) return apiGet({ action: "init" });
               } else {
                 setBackendVerified(false);
               }
@@ -268,7 +270,7 @@
             })
             .catch(() => setBackendVerified(false));
         }
-      }, [kioskTab]);
+      }, [view, configUnlocked]);
 
       // Auto-sync cuando el operador desbloquea el panel
       useEffect(() => {
@@ -305,6 +307,10 @@
                 eventoSubtitulo: c.evento_subtitulo || DEFAULTS.eventoSubtitulo,
                 aliasPago: c.alias_pago || DEFAULTS.aliasPago,
               };
+              // Carga estado del botón Pedir
+              if (c.pedido_habilitado !== undefined) {
+                setPedidoHabilitado(String(c.pedido_habilitado).toLowerCase() !== "false" && c.pedido_habilitado !== "0");
+              }
               setConfig(merged);
               saveLocal("kiosko_config_v3", merged);
             }
@@ -473,6 +479,18 @@ No agregues ningún texto fuera del JSON.`
           toast_("Sin conexión — pedido guardado localmente", "warn");
         }
         setLoading(false);
+      }
+
+      // Toggle botón Pedir — guarda en Sheets
+      async function togglePedido(nuevoEstado) {
+        setTogglingPedido(true);
+        setPedidoHabilitado(nuevoEstado);
+        try {
+          await apiGet({ action: "setConfig", key: "pedido_habilitado", value: nuevoEstado ? "true" : "false" });
+        } catch (e) {
+          toast_("No se pudo guardar en Sheets — cambio local aplicado", "warn");
+        }
+        setTogglingPedido(false);
       }
 
       // Cargar estadísticas
@@ -809,15 +827,22 @@ No agregues ningún texto fuera del JSON.`
             React.createElement("div", { style: { fontSize: 12, color: C.textMuted, marginTop: 1 } }, config.eventoSubtitulo)
           ),
           React.createElement("div", { style: { display: "flex", gap: 6 } },
-            React.createElement("button", { style: S.navBtn(view === "home" || view === "done"), onClick: () => setView("home") }, "Pedir"),
+            pedidoHabilitado && React.createElement("button", { style: S.navBtn(view === "home" || view === "done"), onClick: () => setView("home") }, "Pedir"),
             React.createElement("button", { style: S.navBtn(view === "kiosk"), onClick: () => { setView("kiosk"); setSearch(""); setResult(null); setSearched(false); setKioskTab("buscar"); } }, "Entregar"),
             React.createElement("button", { style: S.navBtn(view === "cajas"), onClick: () => { setView("cajas"); setCajasSubmitted(null); setCajasCart({}); setCajasMetodo(null); } }, "Cajas"),
-            React.createElement("button", { style: S.navBtn(view === "stats"), onClick: () => { setView("stats"); setStatsPinError(false); } }, "📊 Stats")
+            React.createElement("button", { style: S.navBtn(view === "stats"), onClick: () => { setView("stats"); setStatsPinError(false); } }, "📊 Stats"),
+            React.createElement("button", { style: S.navBtn(view === "cfg"), onClick: () => { setView("cfg"); setConfigPinError(false); } }, "⚙")
           )
         ),
 
         // ── VISTA HOME ──
-        view === "home" && React.createElement("div", null,
+        view === "home" && !pedidoHabilitado && React.createElement("div", { style: { textAlign: "center", padding: "60px 20px" } },
+          React.createElement("div", { style: { fontSize: 48, marginBottom: 12 } }, "⛔"),
+          React.createElement("div", { style: { fontSize: 17, fontWeight: 700, color: C.text, marginBottom: 8 } }, "Pedidos cerrados"),
+          React.createElement("div", { style: { fontSize: 14, color: C.textMuted } }, "Los pedidos no están disponibles en este momento.")
+        ),
+
+        view === "home" && pedidoHabilitado && React.createElement("div", null,
           config.mensajeDescuento && React.createElement("div", { style: { ...S.succCard, fontWeight: 600, fontSize: 13, marginBottom: 16 } },
             config.mensajeDescuento
           ),
@@ -991,6 +1016,189 @@ No agregues ningún texto fuera del JSON.`
             : React.createElement("div", { style: { fontSize: 11, color: C.amber, marginBottom: 8 } }, "⏳ " + submitted.fileName + " (pendiente de sync)"),
 
           React.createElement("button", { style: { ...S.ghostBtn, width: "100%" }, onClick: () => setView("home") }, "Hacer otro pedido")
+        ),
+
+
+        // ── CONFIG LOGIN ──
+        view === "cfg" && !configUnlocked && React.createElement("div", { style: { textAlign: "center", padding: "48px 0" } },
+          React.createElement("div", { style: { fontSize: 40, marginBottom: 10 } }, "⚙️"),
+          React.createElement("div", { style: { fontSize: 17, fontWeight: 700, marginBottom: 4, color: C.text } }, "Configuración del backend"),
+          React.createElement("div", { style: { fontSize: 13, color: C.textMuted, marginBottom: 22 } }, "Ingresá el PIN de administrador"),
+          React.createElement("input", {
+            type: "password",
+            style: {
+              ...S.input, textAlign: "center", letterSpacing: 10, fontSize: 22, maxWidth: 160, display: "block", margin: "0 auto 14px",
+              borderColor: configPinError ? C.red : C.border, borderWidth: configPinError ? 2 : 1
+            },
+            placeholder: "••••", maxLength: 4, value: configPin,
+            onChange: e => { setConfigPin(e.target.value); setConfigPinError(false); },
+            onKeyDown: e => { if (e.key === "Enter") { if (configPin === "1749") { setConfigUnlocked(true); } else setConfigPinError(true); } }
+          }),
+          configPinError && React.createElement("div", { style: { fontSize: 12, color: C.red, marginBottom: 10 } }, "PIN incorrecto"),
+          React.createElement("button", { style: S.primBtn, onClick: () => { if (configPin === "1749") { setConfigUnlocked(true); } else setConfigPinError(true); } }, "Ingresar"),
+          React.createElement("div", { style: { fontSize: 11, color: C.textLight, marginTop: 10 } }, "PIN de administrador")
+        ),
+
+        // ── CONFIG PANEL ──
+        view === "cfg" && configUnlocked && React.createElement("div", null,
+          React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 } },
+            React.createElement("div", { style: { fontSize: 16, fontWeight: 700, color: C.text } }, "Configuración del backend"),
+            React.createElement("button", { style: { ...S.ghostBtn, fontSize: 12 }, onClick: () => { setConfigUnlocked(false); setConfigPin(""); } }, "Salir")
+          ),
+
+          React.createElement("div", { style: { fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 16 } }, "Configuración del backend"),
+
+          // ── Estado de conexión ──
+          React.createElement("div", { style: { ...S.card, marginBottom: 8 } },
+            React.createElement("div", { style: { fontSize: 12, fontWeight: 600, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 } }, "Estado"),
+            React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: (backendVerified === true) ? 14 : 0 } },
+              React.createElement("div", {
+                style: {
+                  width: 10, height: 10, borderRadius: "50%", flexShrink: 0,
+                  background: backendVerified === null ? C.textLight : backendVerified === true ? C.green : C.amber
+                }
+              }),
+              React.createElement("div", {
+                style: {
+                  fontSize: 13, fontWeight: 600, color:
+                    backendVerified === null ? C.textMuted :
+                      backendVerified === true ? C.green : C.amber
+                }
+              },
+                backendVerified === null ? "Verificando conexión…" :
+                  backendVerified === true ? "Conectado a Google Apps Script" :
+                    "Sin conexión con el backend"
+              )
+            ),
+            // Links visibles solo cuando está conectado
+            backendVerified === true && React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } },
+              React.createElement("a", {
+                href: meta.sheetUrl || "#",
+                target: "_blank", rel: "noreferrer",
+                style: {
+                  display: "flex", alignItems: "center", gap: 10, padding: "10px 12px",
+                  background: C.blueLight, border: `1px solid ${C.blueBorder}`,
+                  borderRadius: 8, textDecoration: "none", color: C.blue, fontSize: 13, fontWeight: 600
+                }
+              },
+                React.createElement("span", { style: { fontSize: 18 } }, "📊"),
+                React.createElement("div", null,
+                  React.createElement("div", null, "Ver Google Sheet — Pedidos"),
+                  React.createElement("div", { style: { fontSize: 11, fontWeight: 400, color: C.textMuted, marginTop: 1 } }, "Tabla con todos los pedidos y estados")
+                )
+              ),
+              React.createElement("a", {
+                href: meta.driveUrl || "#",
+                target: "_blank", rel: "noreferrer",
+                style: {
+                  display: "flex", alignItems: "center", gap: 10, padding: "10px 12px",
+                  background: C.greenLight, border: `1px solid ${C.greenBorder}`,
+                  borderRadius: 8, textDecoration: "none", color: C.green, fontSize: 13, fontWeight: 600
+                }
+              },
+                React.createElement("span", { style: { fontSize: 18 } }, "📁"),
+                React.createElement("div", null,
+                  React.createElement("div", null, "Ver carpeta en Drive — Comprobantes"),
+                  React.createElement("div", { style: { fontSize: 11, fontWeight: 400, color: C.textMuted, marginTop: 1 } }, "Archivos subidos por los clientes")
+                )
+              )
+            )
+          ),
+
+          // ── Toggle botón Pedir ──
+          React.createElement("div", { style: { ...S.card, marginBottom: 8 } },
+            React.createElement("div", { style: { fontSize: 12, fontWeight: 600, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 } }, "Botón Pedir"),
+            React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 } },
+              React.createElement("div", null,
+                React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: C.text } }, pedidoHabilitado ? "✅ Habilitado" : "⛔ Deshabilitado"),
+                React.createElement("div", { style: { fontSize: 11, color: C.textMuted, marginTop: 2 } },
+                  pedidoHabilitado ? "Los clientes pueden realizar pedidos" : "El botón Pedir está oculto para los clientes"
+                )
+              ),
+              React.createElement("button", {
+                style: {
+                  padding: "8px 20px", fontSize: 13, fontWeight: 600, cursor: "pointer", borderRadius: 8, border: "none",
+                  background: pedidoHabilitado ? C.red : C.green,
+                  color: "white", opacity: togglingPedido ? 0.6 : 1, minWidth: 110
+                },
+                onClick: () => togglePedido(!pedidoHabilitado),
+                disabled: togglingPedido
+              }, togglingPedido ? "Guardando…" : pedidoHabilitado ? "Deshabilitar" : "Habilitar")
+            )
+          ),
+
+          // ── Pasos de configuración (solo si no está conectado) ──
+          backendVerified !== true && React.createElement("div", { style: { ...S.card, background: C.grayLight, marginBottom: 8 } },
+            React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 8 } }, "Pasos para configurar"),
+            React.createElement("ol", { style: { fontSize: 12, color: C.textMuted, paddingLeft: 16, lineHeight: 1.9 } },
+              React.createElement("li", null, "Abrí ", React.createElement("a", { href: "https://script.google.com", target: "_blank" }, "script.google.com"), " con la cuenta Gmail del evento"),
+              React.createElement("li", null, "Nuevo proyecto → pegá el código de Code.gs"),
+              React.createElement("li", null, "Implementar → Nueva implementación → Aplicación web"),
+              React.createElement("li", null, "Ejecutar como: Yo · Acceso: Cualquier persona"),
+              React.createElement("li", null, "Copiá la URL /exec y reemplazá APPS_SCRIPT_URL en este archivo HTML"),
+              React.createElement("li", null, "Tocá el botón de abajo para crear la Sheet y Drive")
+            )
+          ),
+
+          // ── Reset para producción ──
+          backendVerified === true && React.createElement("div", { style: { background: C.redLight, border: `1px solid #f09595`, borderRadius: 12, padding: "14px 16px", marginBottom: 8 } },
+            React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: C.red, marginBottom: 4 } }, "⚠ Zona de peligro"),
+            React.createElement("div", { style: { fontSize: 12, color: C.red, marginBottom: 12, opacity: 0.85 } },
+              "Borra todos los pedidos de la planilla y limpia el localStorage. Usá solo antes del lanzamiento real."
+            ),
+            React.createElement("button", {
+              style: { ...S.primBtn, width: "100%", padding: "10px 0", background: C.red, opacity: resetting ? 0.6 : 1 },
+              onClick: () => setResetConfirm(true), disabled: resetting
+            }, "🗑 Resetear para producción")
+          ),
+
+          // ── Botón inicializar ──
+          React.createElement("button", {
+            style: { ...S.primBtn, width: "100%", padding: "12px 0", opacity: loading ? 0.6 : 1 },
+            onClick: initBackend, disabled: loading
+          }, loading ? "Inicializando…" : backendVerified === true ? "↻ Re-inicializar backend" : "Inicializar backend en Google"),
+
+          // ── Modal de confirmación reset ──
+          resetConfirm && React.createElement("div", { style: { ...S.overlay, position: "fixed" } },
+            React.createElement("div", { style: { ...S.modal, maxWidth: 340 } },
+              React.createElement("div", { style: { fontSize: 32, marginBottom: 8 } }, "⚠️"),
+              React.createElement("div", { style: { fontSize: 17, fontWeight: 700, color: C.red, marginBottom: 8 } }, "¿Resetear todo?"),
+              React.createElement("div", { style: { fontSize: 13, color: C.textMuted, marginBottom: 6 } }, "Esta acción va a:"),
+              React.createElement("ul", { style: { fontSize: 12, color: C.text, textAlign: "left", paddingLeft: 20, marginBottom: 16, lineHeight: 2 } },
+                React.createElement("li", null, "Borrar todos los pedidos de la planilla"),
+                React.createElement("li", null, "Limpiar el historial de este browser"),
+                React.createElement("li", null, "El próximo pedido comenzará con #1"),
+                React.createElement("li", null, "El menú y la configuración se conservan")
+              ),
+              React.createElement("div", { style: { fontSize: 12, fontWeight: 600, color: C.red, marginBottom: 12 } },
+                "Esta operación no se puede deshacer."
+              ),
+              React.createElement("div", { style: { marginBottom: 16 } },
+                React.createElement("div", { style: { fontSize: 12, color: C.textMuted, marginBottom: 6, textAlign: "left" } }, "PIN de administrador"),
+                React.createElement("input", {
+                  type: "password",
+                  style: {
+                    ...S.input, textAlign: "center", letterSpacing: 8, fontSize: 20,
+                    borderColor: adminPinError ? C.red : C.border,
+                    borderWidth: adminPinError ? 2 : 1
+                  },
+                  placeholder: "••••", maxLength: 4, value: adminPin,
+                  onChange: e => { setAdminPin(e.target.value); setAdminPinError(false); },
+                  onKeyDown: e => { if (e.key === "Enter") { if (adminPin === "1749") resetAll(); else setAdminPinError(true); } }
+                }),
+                adminPinError && React.createElement("div", { style: { fontSize: 12, color: C.red, marginTop: 5 } }, "PIN incorrecto")
+              ),
+              React.createElement("div", { style: { display: "flex", gap: 10, justifyContent: "center" } },
+                React.createElement("button", { style: S.ghostBtn, onClick: () => { setResetConfirm(false); setAdminPin(""); setAdminPinError(false); } }, "Cancelar"),
+                React.createElement("button", {
+                  style: { ...S.greenBtn, background: C.red, opacity: resetting ? 0.6 : 1 },
+                  onClick: () => { if (adminPin === "1749") resetAll(); else setAdminPinError(true); },
+                  disabled: resetting
+                }, resetting ? "Reseteando…" : "Confirmar reset")
+              )
+            )
+          )
+
         ),
 
         // ── STATS LOGIN ──
@@ -1335,7 +1543,6 @@ No agregues ningún texto fuera del JSON.`
             React.createElement("div", { style: { display: "flex", gap: 6 } },
               kioskTab === "buscar" && React.createElement("button", { style: { ...S.ghostBtn, fontSize: 12 }, onClick: syncOrders, disabled: loading }, loading ? "…" : "↻ Sync"),
               React.createElement("button", { style: S.navBtn(kioskTab === "buscar"), onClick: () => setKioskTab("buscar") }, "Entregas"),
-              React.createElement("button", { style: S.navBtn(kioskTab === "config"), onClick: () => setKioskTab("config") }, "⚙"),
               React.createElement("button", { style: { ...S.ghostBtn, fontSize: 12 }, onClick: () => { setUnlocked(false); setPin(""); setKioskTab("buscar"); } }, "Salir")
             )
           ),
@@ -1370,138 +1577,7 @@ No agregues ningún texto fuera del JSON.`
           ),
 
 
-          kioskTab === "config" && React.createElement("div", null,
-            React.createElement("div", { style: { fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 16 } }, "Configuración del backend"),
 
-            // ── Estado de conexión ──
-            React.createElement("div", { style: { ...S.card, marginBottom: 8 } },
-              React.createElement("div", { style: { fontSize: 12, fontWeight: 600, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 } }, "Estado"),
-              React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: (backendVerified === true) ? 14 : 0 } },
-                React.createElement("div", {
-                  style: {
-                    width: 10, height: 10, borderRadius: "50%", flexShrink: 0,
-                    background: backendVerified === null ? C.textLight : backendVerified === true ? C.green : C.amber
-                  }
-                }),
-                React.createElement("div", {
-                  style: {
-                    fontSize: 13, fontWeight: 600, color:
-                      backendVerified === null ? C.textMuted :
-                        backendVerified === true ? C.green : C.amber
-                  }
-                },
-                  backendVerified === null ? "Verificando conexión…" :
-                    backendVerified === true ? "Conectado a Google Apps Script" :
-                      "Sin conexión con el backend"
-                )
-              ),
-              // Links visibles solo cuando está conectado
-              backendVerified === true && React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } },
-                React.createElement("a", {
-                  href: meta.sheetUrl || "#",
-                  target: "_blank", rel: "noreferrer",
-                  style: {
-                    display: "flex", alignItems: "center", gap: 10, padding: "10px 12px",
-                    background: C.blueLight, border: `1px solid ${C.blueBorder}`,
-                    borderRadius: 8, textDecoration: "none", color: C.blue, fontSize: 13, fontWeight: 600
-                  }
-                },
-                  React.createElement("span", { style: { fontSize: 18 } }, "📊"),
-                  React.createElement("div", null,
-                    React.createElement("div", null, "Ver Google Sheet — Pedidos"),
-                    React.createElement("div", { style: { fontSize: 11, fontWeight: 400, color: C.textMuted, marginTop: 1 } }, "Tabla con todos los pedidos y estados")
-                  )
-                ),
-                React.createElement("a", {
-                  href: meta.driveUrl || "#",
-                  target: "_blank", rel: "noreferrer",
-                  style: {
-                    display: "flex", alignItems: "center", gap: 10, padding: "10px 12px",
-                    background: C.greenLight, border: `1px solid ${C.greenBorder}`,
-                    borderRadius: 8, textDecoration: "none", color: C.green, fontSize: 13, fontWeight: 600
-                  }
-                },
-                  React.createElement("span", { style: { fontSize: 18 } }, "📁"),
-                  React.createElement("div", null,
-                    React.createElement("div", null, "Ver carpeta en Drive — Comprobantes"),
-                    React.createElement("div", { style: { fontSize: 11, fontWeight: 400, color: C.textMuted, marginTop: 1 } }, "Archivos subidos por los clientes")
-                  )
-                )
-              )
-            ),
-
-            // ── Pasos de configuración (solo si no está conectado) ──
-            backendVerified !== true && React.createElement("div", { style: { ...S.card, background: C.grayLight, marginBottom: 8 } },
-              React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 8 } }, "Pasos para configurar"),
-              React.createElement("ol", { style: { fontSize: 12, color: C.textMuted, paddingLeft: 16, lineHeight: 1.9 } },
-                React.createElement("li", null, "Abrí ", React.createElement("a", { href: "https://script.google.com", target: "_blank" }, "script.google.com"), " con la cuenta Gmail del evento"),
-                React.createElement("li", null, "Nuevo proyecto → pegá el código de Code.gs"),
-                React.createElement("li", null, "Implementar → Nueva implementación → Aplicación web"),
-                React.createElement("li", null, "Ejecutar como: Yo · Acceso: Cualquier persona"),
-                React.createElement("li", null, "Copiá la URL /exec y reemplazá APPS_SCRIPT_URL en este archivo HTML"),
-                React.createElement("li", null, "Tocá el botón de abajo para crear la Sheet y Drive")
-              )
-            ),
-
-            // ── Reset para producción ──
-            backendVerified === true && React.createElement("div", { style: { background: C.redLight, border: `1px solid #f09595`, borderRadius: 12, padding: "14px 16px", marginBottom: 8 } },
-              React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: C.red, marginBottom: 4 } }, "⚠ Zona de peligro"),
-              React.createElement("div", { style: { fontSize: 12, color: C.red, marginBottom: 12, opacity: 0.85 } },
-                "Borra todos los pedidos de la planilla y limpia el localStorage. Usá solo antes del lanzamiento real."
-              ),
-              React.createElement("button", {
-                style: { ...S.primBtn, width: "100%", padding: "10px 0", background: C.red, opacity: resetting ? 0.6 : 1 },
-                onClick: () => setResetConfirm(true), disabled: resetting
-              }, "🗑 Resetear para producción")
-            ),
-
-            // ── Botón inicializar ──
-            React.createElement("button", {
-              style: { ...S.primBtn, width: "100%", padding: "12px 0", opacity: loading ? 0.6 : 1 },
-              onClick: initBackend, disabled: loading
-            }, loading ? "Inicializando…" : backendVerified === true ? "↻ Re-inicializar backend" : "Inicializar backend en Google"),
-
-            // ── Modal de confirmación reset ──
-            resetConfirm && React.createElement("div", { style: { ...S.overlay, position: "fixed" } },
-              React.createElement("div", { style: { ...S.modal, maxWidth: 340 } },
-                React.createElement("div", { style: { fontSize: 32, marginBottom: 8 } }, "⚠️"),
-                React.createElement("div", { style: { fontSize: 17, fontWeight: 700, color: C.red, marginBottom: 8 } }, "¿Resetear todo?"),
-                React.createElement("div", { style: { fontSize: 13, color: C.textMuted, marginBottom: 6 } }, "Esta acción va a:"),
-                React.createElement("ul", { style: { fontSize: 12, color: C.text, textAlign: "left", paddingLeft: 20, marginBottom: 16, lineHeight: 2 } },
-                  React.createElement("li", null, "Borrar todos los pedidos de la planilla"),
-                  React.createElement("li", null, "Limpiar el historial de este browser"),
-                  React.createElement("li", null, "El próximo pedido comenzará con #1"),
-                  React.createElement("li", null, "El menú y la configuración se conservan")
-                ),
-                React.createElement("div", { style: { fontSize: 12, fontWeight: 600, color: C.red, marginBottom: 12 } },
-                  "Esta operación no se puede deshacer."
-                ),
-                React.createElement("div", { style: { marginBottom: 16 } },
-                  React.createElement("div", { style: { fontSize: 12, color: C.textMuted, marginBottom: 6, textAlign: "left" } }, "PIN de administrador"),
-                  React.createElement("input", {
-                    type: "password",
-                    style: {
-                      ...S.input, textAlign: "center", letterSpacing: 8, fontSize: 20,
-                      borderColor: adminPinError ? C.red : C.border,
-                      borderWidth: adminPinError ? 2 : 1
-                    },
-                    placeholder: "••••", maxLength: 4, value: adminPin,
-                    onChange: e => { setAdminPin(e.target.value); setAdminPinError(false); },
-                    onKeyDown: e => { if (e.key === "Enter") { if (adminPin === "1749") resetAll(); else setAdminPinError(true); } }
-                  }),
-                  adminPinError && React.createElement("div", { style: { fontSize: 12, color: C.red, marginTop: 5 } }, "PIN incorrecto")
-                ),
-                React.createElement("div", { style: { display: "flex", gap: 10, justifyContent: "center" } },
-                  React.createElement("button", { style: S.ghostBtn, onClick: () => { setResetConfirm(false); setAdminPin(""); setAdminPinError(false); } }, "Cancelar"),
-                  React.createElement("button", {
-                    style: { ...S.greenBtn, background: C.red, opacity: resetting ? 0.6 : 1 },
-                    onClick: () => { if (adminPin === "1749") resetAll(); else setAdminPinError(true); },
-                    disabled: resetting
-                  }, resetting ? "Reseteando…" : "Confirmar reset")
-                )
-              )
-            )
-          )
         )
       );
     }

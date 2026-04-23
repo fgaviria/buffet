@@ -9,7 +9,7 @@
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
   <title>Buffet Family</title>
-  <meta name="version" content="20260423-1823">
+  <meta name="version" content="20260423-1831">
   <style>
     *,
     *::before,
@@ -159,11 +159,11 @@
       secTitle: { fontSize: 11, fontWeight: 600, color: C.textMuted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 },
       divider: { borderTop: `1px solid ${C.border}`, margin: "12px 0" },
       navBtn: (a) => ({
-        padding: "6px 11px", fontSize: 12, fontWeight: a ? 600 : 400, cursor: "pointer",
+        height: 40, flex: 1, fontSize: 13, fontWeight: a ? 600 : 500, cursor: "pointer",
         background: a ? C.blueLight : "transparent",
         color: a ? C.blue : C.textMuted,
         border: `1px solid ${a ? C.blueBorder : C.border}`,
-        borderRadius: 8,
+        borderRadius: 10, whiteSpace: "nowrap",
       }),
       qBtn: { width: 30, height: 30, borderRadius: "50%", border: `1px solid ${C.border}`, background: C.grayLight, color: C.text, cursor: "pointer", fontSize: 18, lineHeight: "30px", textAlign: "center" },
       primBtn: { padding: "10px 18px", fontSize: 14, fontWeight: 600, cursor: "pointer", borderRadius: 8, background: C.blue, color: "white", border: "none" },
@@ -841,7 +841,7 @@ No agregues ningún texto fuera del JSON.`
             }, "2026")
           ),
           // ── Nav debajo ──
-          React.createElement("div", { style: { display: "flex", gap: 5 } },
+          React.createElement("div", { style: { display: "flex", gap: 6 } },
             pedidoHabilitado && React.createElement("button", { style: S.navBtn(view === "home" || view === "done"), onClick: () => setView("home") }, "Pedir"),
             React.createElement("button", { style: S.navBtn(view === "kiosk"), onClick: () => { setView("kiosk"); setSearch(""); setResult(null); setSearched(false); setKioskTab("buscar"); } }, "Entregar"),
             React.createElement("button", { style: S.navBtn(view === "cajas"), onClick: () => { setView("cajas"); setCajasSubmitted(null); setCajasCart({}); setCajasMetodo(null); } }, "Cajas"),
